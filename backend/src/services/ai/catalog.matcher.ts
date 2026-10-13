@@ -95,14 +95,13 @@ export class CatalogMatcher {
         if (cLower.includes(query) || query.includes(cLower)) return true;
         if (cSingular.includes(singularQuery) || singularQuery.includes(cSingular)) return true;
 
-        // Known wholesale shorthands & Hindi synonyms
-        if ((query === 'tom' || query === 'tamatar' || query === 'tamator' || singularQuery === 'tomato') && cLower.includes('tomato')) return true;
-        if ((query === 'pot' || singularQuery === 'potato') && cLower.includes('potato')) return true;
-        if ((query === 'pyaz' || query === 'kanda' || singularQuery === 'onion') && (cLower.includes('onion') || cLower.includes('pyaz'))) return true;
-        if ((query === 'aalu' || query === 'alu' || query === 'batata' || singularQuery === 'potato') && (cLower.includes('potato') || cLower.includes('aalu') || cLower.includes('alu'))) return true;
-        if ((query === 'bhindi' || query === 'okra') && (cLower.includes('bhindi') || cLower.includes('okra'))) return true;
-        if ((query === 'chilli' || query === 'mirchi') && (cLower.includes('chilli') || cLower.includes('mirchi'))) return true;
-        if (singularQuery === 'banana' && cLower.includes('banana')) return true;
+        // Known wholesale shorthands & Hindi synonyms (Romanized and Devanagari script)
+        if ((query === 'tom' || query === 'tamatar' || query === 'tamator' || query === 'टमाटर' || singularQuery === 'tomato') && cLower.includes('tomato')) return true;
+        if ((query === 'pot' || singularQuery === 'potato' || query === 'aalu' || query === 'alu' || query === 'आलू' || query === 'बटाटा') && (cLower.includes('potato') || cLower.includes('aalu') || cLower.includes('alu'))) return true;
+        if ((query === 'pyaz' || query === 'kanda' || query === 'प्याज़' || query === 'प्याज' || query === 'कांदा' || singularQuery === 'onion') && (cLower.includes('onion') || cLower.includes('pyaz'))) return true;
+        if ((query === 'bhindi' || query === 'okra' || query === 'भिंडी') && (cLower.includes('bhindi') || cLower.includes('okra'))) return true;
+        if ((query === 'chilli' || query === 'mirchi' || query === 'मिर्ची' || query === 'हरी मिर्च') && (cLower.includes('chilli') || cLower.includes('mirchi'))) return true;
+        if ((query === 'kela' || query === 'केला' || singularQuery === 'banana') && cLower.includes('banana')) return true;
         if (singularQuery === 'watermelon' && cLower.includes('watermelon')) return true;
 
         return false;

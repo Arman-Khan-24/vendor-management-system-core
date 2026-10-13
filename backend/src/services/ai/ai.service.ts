@@ -41,7 +41,7 @@ export class GeminiExtractionProvider implements IOrderExtractionProvider {
   private apiKey: string;
   private model: string;
 
-  constructor(apiKey: string, model: string = 'gemini-1.5-flash') {
+  constructor(apiKey: string, model: string = 'gemini-2.5-flash') {
     this.apiKey = apiKey;
     this.model = model;
   }
@@ -74,24 +74,41 @@ CRITICAL PARSING RULES:
    - "tomato 5kg pyaz 3kg aalu 10kg bhindi 2kg" MUST extract 4 distinct items: tomato 5kg, pyaz 3kg, aalu 10kg, bhindi 2kg.
    - "tomato 5kg and potato 10kg" MUST extract 2 distinct items: tomato 5kg, potato 10kg.
 2. NEVER merge adjacent items or drop items. If the customer lists 4 items, you must extract all 4 items.
-3. Understand common Hinglish/Hindi synonyms against the catalog (e.g. pyaz/kanda -> onion, aalu/batata -> potato, bhindi -> okra, tamatar -> tomato).
+3. Understand common Hinglish/Hindi synonyms in BOTH Roman script and Devanagari Hindi script (e.g. टमाटर -> tomato, प्याज़/कांदा -> onion, आलू/बटाटा -> potato, केला -> banana) and units (किलो/किग्रा -> kg, दर्जन -> dozen).
 4. If a quantity has no unit specified (e.g., "Tomatoes- 20"), leave the unit empty string ("") so it can be matched with catalog default.
 5. If you cannot confidently identify any valid product or if the message is unintelligible gibberish, return "items": [] and include an explicit explanation in "warnings", e.g. ["Could not parse message into order items"]. NEVER return a garbled or merged single item.
 6. Output valid JSON only with NO markdown fences.`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: 'application/json' }
-      })
-    });
+    let res: Response | null = null;
+    let attempts = 0;
+    const maxAttempts = 3;
 
-    if (!res.ok) {
+    while (attempts < maxAttempts) {
+      attempts++;
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: 'application/json' }
+        })
+      });
+
+      if (res.ok) break;
+
+      if ((res.status === 503 || res.status === 429) && attempts < maxAttempts) {
+        console.warn(`[Gemini Text HTTP ${res.status}]: Retrying attempt ${attempts + 1}/${maxAttempts} in 2.5s...`);
+        await new Promise(r => setTimeout(r, 2500));
+        continue;
+      }
+
       const errBody = await res.text();
       throw new Error(`Gemini API error [${res.status}]: ${errBody}`);
+    }
+
+    if (!res || !res.ok) {
+      throw new Error(`Gemini API failed after ${attempts} attempts`);
     }
 
     const data: any = await res.json();
@@ -133,36 +150,54 @@ Accurately transcribe and extract ALL items, quantities, and units into structur
 
 VISION EXTRACTION RULES:
 1. Handle realistic kitchen conditions: angled photos, uneven lighting, shadows, handwritten script, cursive, or ink smudges.
-2. CROSSED OUT ITEMS / CORRECTIONS: If an item is struck through, crossed out (e.g. ~~10kg tomato~~ 15kg tomato), or modified with an arrow/scribble, take ONLY the final intended correction. Do NOT include crossed-out items.
-3. Messy lists: Items may be in multi-column, clustered, or space-separated lists. Extract every single non-crossed-out line item.
-4. If a handwritten word or quantity is illegible, blurry, or ambiguous, DO NOT guess wildly. Include an explicit warning in "warnings" (e.g. ["Illegible quantity for line item near bottom"]).
-5. If the image is completely blank, unintelligible, or not an order (e.g. photo of random object), return "items": [] and warning "Image does not appear to contain readable order items".
-6. Output valid JSON only with NO markdown fences.`;
+2. Full multilingual support: Accurately read handwritten notes written in Hindi (Devanagari script like "टमाटर", "प्याज़", "आलू"), English, or mixed script (Devanagari + English in the same note). Map Devanagari units (किलो/किग्रा -> kg, दर्जन -> dozen).
+3. CROSSED OUT ITEMS / CORRECTIONS: If an item is struck through, crossed out (e.g. ~~10kg tomato~~ 15kg tomato), or modified with an arrow/scribble, take ONLY the final intended correction. Do NOT include crossed-out items.
+4. Messy lists: Items may be in multi-column, clustered, or space-separated lists. Extract every single non-crossed-out line item.
+5. If a handwritten word or quantity is illegible, blurry, or ambiguous, DO NOT guess wildly. Include an explicit warning in "warnings" (e.g. ["Illegible quantity for line item near bottom"]).
+6. If the image is completely blank, unintelligible, or not an order (e.g. photo of random object), return "items": [] and warning "Image does not appear to contain readable order items".
+7. Output valid JSON only with NO markdown fences.`;
 
     const base64Data = imageBuffer.toString('base64');
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: prompt },
-            {
-              inline_data: {
-                mime_type: mimeType,
-                data: base64Data
-              }
-            }
-          ]
-        }],
-        generationConfig: { responseMimeType: 'application/json' }
-      })
-    });
+    let res: Response | null = null;
+    let attempts = 0;
+    const maxAttempts = 3;
 
-    if (!res.ok) {
+    while (attempts < maxAttempts) {
+      attempts++;
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: prompt },
+              {
+                inline_data: {
+                  mime_type: mimeType,
+                  data: base64Data
+                }
+              }
+            ]
+          }],
+          generationConfig: { responseMimeType: 'application/json' }
+        })
+      });
+
+      if (res.ok) break;
+
+      if ((res.status === 503 || res.status === 429) && attempts < maxAttempts) {
+        console.warn(`[Gemini Vision HTTP ${res.status}]: Retrying attempt ${attempts + 1}/${maxAttempts} in 2.5s...`);
+        await new Promise(r => setTimeout(r, 2500));
+        continue;
+      }
+
       const errBody = await res.text();
       throw new Error(`Gemini Vision API error [${res.status}]: ${errBody}`);
+    }
+
+    if (!res || !res.ok) {
+      throw new Error(`Gemini Vision API failed after ${attempts} attempts`);
     }
 
     const data: any = await res.json();
@@ -495,7 +530,7 @@ export class AiOrderExtractionService {
 
   constructor(primary?: IOrderExtractionProvider, fallback?: IOrderExtractionProvider) {
     const primaryName = process.env.AI_PRIMARY_PROVIDER || 'gemini';
-    const primaryModel = process.env.AI_PRIMARY_MODEL || 'gemini-1.5-flash';
+    const primaryModel = process.env.AI_PRIMARY_MODEL || 'gemini-2.5-flash';
     const primaryKey = process.env.AI_PRIMARY_API_KEY || 'mock';
 
     const fallbackName = process.env.AI_FALLBACK_PROVIDER || 'groq';

@@ -33,7 +33,7 @@ export class MockWhatsAppProvider implements IWhatsAppProvider {
     const providerMessageId = body.providerMessageId || `mock_msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
     // Image attachment simulation
-    if (body.image || body.imageUrl || body.mediaUrl || body.imageBase64 || body.messageType === 'image') {
+    if (body.image || body.imageUrl || body.mediaUrl || body.imageBase64 || body.mediaBase64 || body.messageType === 'image') {
       return {
         providerMessageId,
         senderPhone,
@@ -41,7 +41,7 @@ export class MockWhatsAppProvider implements IWhatsAppProvider {
         messageText: (body.caption || body.messageText || '').trim(),
         mediaUrl: body.imageUrl || body.mediaUrl,
         mediaMimeType: body.mediaMimeType || 'image/jpeg',
-        mediaBase64: body.imageBase64 || body.image,
+        mediaBase64: body.mediaBase64 || body.imageBase64 || body.image,
         rawPayload: body
       };
     }
