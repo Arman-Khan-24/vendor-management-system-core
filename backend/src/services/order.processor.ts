@@ -9,7 +9,11 @@ export interface OrderExtractionJobPayload {
   businessId: string;
   customerId: string;
   senderPhone: string;
-  messageText: string;
+  messageType?: 'text' | 'image';
+  messageText?: string;
+  mediaUrl?: string;
+  mediaBase64?: string;
+  mediaMimeType?: string;
   providerMessageId?: string;
   isCorrection?: boolean;
   pendingConfirmationId?: string;
@@ -23,7 +27,7 @@ export class OrderProcessingEngine {
   }
 
   /**
-   * Process incoming text order synchronously (worker or direct test runner)
+   * Process incoming text or image order synchronously (worker or direct test runner)
    */
   static async processExtraction(payload: OrderExtractionJobPayload) {
     const {
@@ -31,7 +35,11 @@ export class OrderProcessingEngine {
       businessId,
       customerId,
       senderPhone,
-      messageText,
+      messageType = 'text',
+      messageText = '',
+      mediaUrl,
+      mediaBase64,
+      mediaMimeType = 'image/jpeg',
       isCorrection,
       pendingConfirmationId
     } = payload;
@@ -55,28 +63,67 @@ export class OrderProcessingEngine {
       return { success: false, reason: 'empty_catalog' };
     }
 
-    // 2. Call AI Extraction Service (Gemini primary -> Groq fallback)
+    // 2. Call AI Extraction Service (Text vs Vision)
     const startTime = Date.now();
     let extraction;
+    const isImage = messageType === 'image';
+    const auditInputText = isImage ? (messageText ? `[Image]: ${messageText}` : '[Order Photo]') : messageText;
+
     try {
-      extraction = await this.aiService.extract(messageText, catalog);
+      if (isImage) {
+        let imageBuffer: Buffer;
+        let mime = mediaMimeType;
+
+        if (mediaBase64) {
+          imageBuffer = Buffer.from(mediaBase64, 'base64');
+        } else if (mediaUrl) {
+          if (whatsapp.downloadMedia) {
+            const downloaded = await whatsapp.downloadMedia(mediaUrl);
+            imageBuffer = downloaded.data;
+            mime = downloaded.mimeType || mime;
+          } else {
+            const res = await fetch(mediaUrl);
+            imageBuffer = Buffer.from(await res.arrayBuffer());
+            mime = res.headers.get('content-type') || mime;
+          }
+        } else {
+          throw new Error('Image message received without mediaUrl or mediaBase64');
+        }
+
+        extraction = await this.aiService.extractImage(imageBuffer, mime, catalog, messageText);
+      } else {
+        extraction = await this.aiService.extract(messageText, catalog);
+      }
     } catch (err: any) {
-      // Audit failure
+      // Audit failure with duration & input_type
       await query(
         `INSERT INTO ai_extraction_audits 
-         (business_id, inbound_message_id, primary_provider, primary_model, used_provider, used_model, was_fallback, success, input_text, error_message, duration_ms)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9, $10)`,
-        [businessId, inboundMessageId, 'gemini', 'gemini-1.5-flash', 'groq', 'llama-3.3-70b-versatile', true, messageText, err.message, Date.now() - startTime]
+         (business_id, inbound_message_id, primary_provider, primary_model, used_provider, used_model, was_fallback, success, input_text, input_type, media_url, error_message, duration_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9, $10, $11, $12)`,
+        [
+          businessId,
+          inboundMessageId,
+          'gemini',
+          'gemini-1.5-flash',
+          'groq',
+          isImage ? 'qwen/qwen3.8-27b' : 'llama-3.3-70b-versatile',
+          true,
+          auditInputText,
+          isImage ? 'image' : 'text',
+          mediaUrl || null,
+          err.message,
+          Date.now() - startTime
+        ]
       );
-      await whatsapp.sendTextMessage(senderPhone, 'Sorry, we could not process your order at this moment. The vendor has been notified.');
+      await whatsapp.sendTextMessage(senderPhone, 'Sorry, we could not read your order image at this moment. Please type your order or send a clearer photo.');
       return { success: false, reason: 'ai_extraction_failed', error: err.message };
     }
 
-    // 3. Audit Successful Inference
+    // 3. Audit Successful Inference with model, duration, and input_type
     await query(
       `INSERT INTO ai_extraction_audits 
-       (business_id, inbound_message_id, primary_provider, primary_model, used_provider, used_model, was_fallback, success, input_text, raw_response, structured_output, duration_ms)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, $10, $11)`,
+       (business_id, inbound_message_id, primary_provider, primary_model, used_provider, used_model, was_fallback, success, input_text, input_type, media_url, raw_response, structured_output, duration_ms)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, $10, $11, $12, $13)`,
       [
         businessId,
         inboundMessageId,
@@ -85,7 +132,9 @@ export class OrderProcessingEngine {
         extraction.provider,
         extraction.model,
         extraction.wasFallback,
-        messageText,
+        auditInputText,
+        isImage ? 'image' : 'text',
+        mediaUrl || null,
         extraction.rawResponse || '',
         JSON.stringify({ items: extraction.items, warnings: extraction.warnings }),
         Date.now() - startTime
@@ -97,7 +146,10 @@ export class OrderProcessingEngine {
 
     if (!matchResult.isValid) {
       // Build helpful clarification/warning prompt for customer
-      let clarification = 'Could not fully understand your order:';
+      let clarification = isImage
+        ? 'Could not fully read or match your order photo:'
+        : 'Could not fully understand your order:';
+
       if (matchResult.unresolvedItems.length > 0) {
         clarification += `\n- Items not found in catalog: ${matchResult.unresolvedItems.join(', ')}`;
       }
@@ -106,21 +158,29 @@ export class OrderProcessingEngine {
           clarification += `\n- "${amb.input}" matches multiple items (${amb.candidates.join(' / ')}). Please clarify.`;
         }
       }
+      if (extraction.warnings && extraction.warnings.length > 0) {
+        for (const w of extraction.warnings) {
+          clarification += `\n- Note: ${w}`;
+        }
+      }
       clarification += '\nPlease reply with the updated item names and quantities.';
 
       await whatsapp.sendTextMessage(senderPhone, clarification);
-      return { success: false, reason: 'catalog_matching_failed', matchResult };
+      return { success: false, reason: 'catalog_matching_failed', matchResult, warnings: extraction.warnings };
     }
 
     // 5. Create or Update Pending Order Confirmation (NOT actual order yet)
     let confirmationId: string;
+    const sourceType = isImage ? 'whatsapp_image' : 'whatsapp_text';
+    const rawContent = isImage ? (messageText ? `[Photo]: ${messageText}` : '[Order Photo]') : messageText;
+
     if (isCorrection && pendingConfirmationId) {
       const updateRes = await query(
         `UPDATE pending_order_confirmations 
-         SET extracted_items = $1, raw_text = $2, ai_provider = $3, ai_model = $4, correction_count = correction_count + 1, updated_at = NOW()
-         WHERE id = $5 AND business_id = $6
+         SET extracted_items = $1, raw_text = $2, ai_provider = $3, ai_model = $4, source_type = $5, media_url = $6, correction_count = correction_count + 1, updated_at = NOW()
+         WHERE id = $7 AND business_id = $8
          RETURNING id`,
-        [JSON.stringify(matchResult.matchedItems), messageText, extraction.provider, extraction.model, pendingConfirmationId, businessId]
+        [JSON.stringify(matchResult.matchedItems), rawContent, extraction.provider, extraction.model, sourceType, mediaUrl || null, pendingConfirmationId, businessId]
       );
       confirmationId = updateRes.rows[0]?.id || pendingConfirmationId;
     } else {
@@ -132,10 +192,10 @@ export class OrderProcessingEngine {
 
       const insRes = await query(
         `INSERT INTO pending_order_confirmations 
-         (business_id, customer_id, inbound_message_id, extracted_items, raw_text, ai_provider, ai_model, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending_confirmation')
+         (business_id, customer_id, inbound_message_id, extracted_items, raw_text, ai_provider, ai_model, source_type, media_url, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_confirmation')
          RETURNING id`,
-        [businessId, customerId, inboundMessageId, JSON.stringify(matchResult.matchedItems), messageText, extraction.provider, extraction.model]
+        [businessId, customerId, inboundMessageId, JSON.stringify(matchResult.matchedItems), rawContent, extraction.provider, extraction.model, sourceType, mediaUrl || null]
       );
       confirmationId = insRes.rows[0].id;
     }
@@ -152,7 +212,8 @@ export class OrderProcessingEngine {
       success: true,
       confirmationId,
       items: matchResult.matchedItems,
-      provider: extraction.provider
+      provider: extraction.provider,
+      sourceType
     };
   }
 
@@ -200,11 +261,12 @@ export class OrderProcessingEngine {
     const { OrderRepository } = await import('../repositories/order.repo.js');
 
     // Create Order with exact same transactional logic, sequence number, and price snapshots
+    const orderSource = pending.source_type === 'whatsapp_image' ? 'whatsapp_image' : 'whatsapp_text';
     const createdOrder = await OrderRepository.createOrderWithItems({
       businessId,
       customerId,
-      source: 'whatsapp_text',
-      notes: `WhatsApp Order: "${pending.raw_text.slice(0, 100)}"`,
+      source: orderSource,
+      notes: `WhatsApp ${orderSource === 'whatsapp_image' ? 'Image' : 'Text'} Order: "${pending.raw_text.slice(0, 100)}"`,
       items: items.map(it => ({
         productId: it.productId,
         quantity: it.quantity

@@ -29,8 +29,8 @@ router.post('/:businessId', async (req, res) => {
 
     // 2. Extract inbound payload
     const inbound = provider.parseInbound(req);
-    if (!inbound || !inbound.senderPhone || !inbound.messageText) {
-      return res.status(200).json({ status: 'ignored', message: 'No actionable text content found' });
+    if (!inbound || !inbound.senderPhone || (!inbound.messageText && !inbound.mediaUrl && !inbound.mediaBase64)) {
+      return res.status(200).json({ status: 'ignored', message: 'No actionable text or image content found' });
     }
 
     // 3. Identify Business Tenant
@@ -55,8 +55,8 @@ router.post('/:businessId', async (req, res) => {
     try {
       const insMsg = await query(
         `INSERT INTO whatsapp_messages 
-         (business_id, provider, provider_message_id, sender_phone, customer_id, direction, message_text, raw_payload, status)
-         VALUES ($1, $2, $3, $4, $5, 'inbound', $6, $7, $8)
+         (business_id, provider, provider_message_id, sender_phone, customer_id, direction, message_type, message_text, raw_payload, status)
+         VALUES ($1, $2, $3, $4, $5, 'inbound', $6, $7, $8, $9)
          ON CONFLICT (business_id, provider, provider_message_id) DO NOTHING
          RETURNING id`,
         [
@@ -65,7 +65,8 @@ router.post('/:businessId', async (req, res) => {
           inbound.providerMessageId,
           inbound.senderPhone,
           customer?.id || null,
-          inbound.messageText,
+          inbound.messageType || 'text',
+          inbound.messageText || (inbound.messageType === 'image' ? '[Image Attachment]' : ''),
           JSON.stringify(inbound.rawPayload || {}),
           customer ? 'queued' : 'received'
         ]
@@ -92,8 +93,8 @@ router.post('/:businessId', async (req, res) => {
     }
 
     // 6. Check if this is a YES confirmation
-    const normalizedText = inbound.messageText.trim().toUpperCase();
-    if (normalizedText === 'YES' || normalizedText === 'CONFIRM' || normalizedText === 'OK') {
+    const normalizedText = (inbound.messageText || '').trim().toUpperCase();
+    if (inbound.messageType === 'text' && (normalizedText === 'YES' || normalizedText === 'CONFIRM' || normalizedText === 'OK')) {
       // Process confirmation idempotently
       setImmediate(async () => {
         try {
@@ -123,7 +124,11 @@ router.post('/:businessId', async (req, res) => {
       businessId,
       customerId: customer.id,
       senderPhone: inbound.senderPhone,
+      messageType: inbound.messageType,
       messageText: inbound.messageText,
+      mediaUrl: inbound.mediaUrl,
+      mediaBase64: inbound.mediaBase64,
+      mediaMimeType: inbound.mediaMimeType,
       providerMessageId: inbound.providerMessageId,
       isCorrection,
       pendingConfirmationId
