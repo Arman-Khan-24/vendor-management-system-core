@@ -38,8 +38,18 @@ export class CatalogMatcher {
         continue;
       }
 
-      // 1. Exact Name Match (case-insensitive)
-      const exactMatch = catalog.find(c => c.name.toLowerCase() === query);
+      // Normalize plurals and stems (e.g. 'tomatoes' -> 'tomato', 'onions' -> 'onion', 'potatoes' -> 'potato')
+      const singularQuery = query
+        .replace(/es$/i, '')
+        .replace(/s$/i, '');
+
+      // 1. Exact Name Match (strictly full string equality)
+      const exactMatch = catalog.find(c => {
+        const cLower = c.name.toLowerCase();
+        const cSingular = cLower.replace(/es$/i, '').replace(/s$/i, '');
+        return cLower === query || (query.length > 3 && cSingular === singularQuery);
+      });
+
       if (exactMatch) {
         matchedItems.push({
           productId: exactMatch.id,
@@ -52,16 +62,24 @@ export class CatalogMatcher {
         continue;
       }
 
-      // 2. Word Boundary / Prefix / Shorthand Matching
-      // e.g., 'tom' matches 'Tomato', 'pot' matches 'Potato'
+      // 2. Word Boundary / Prefix / Shorthand / Hindi Synonym Matching
+      // e.g., 'tom' or 'tomatoes' matches 'Tomato', 'pot' matches 'Potato', 'pyaz' matches 'Onion'
       const candidates = catalog.filter(c => {
         const cLower = c.name.toLowerCase();
+        const cSingular = cLower.replace(/es$/i, '').replace(/s$/i, '');
+
         if (cLower.includes(query) || query.includes(cLower)) return true;
-        // Known wholesale shorthands
-        if (query === 'tom' && cLower.includes('tomato')) return true;
-        if (query === 'pot' && cLower.includes('potato')) return true;
-        if (query === 'chilli' && cLower.includes('chilli')) return true;
-        if (query === 'onion' && cLower.includes('onion')) return true;
+        if (cSingular.includes(singularQuery) || singularQuery.includes(cSingular)) return true;
+
+        // Known wholesale shorthands & Hindi synonyms
+        if ((query === 'tom' || query === 'tamatar' || query === 'tamator' || singularQuery === 'tomato') && cLower.includes('tomato')) return true;
+        if ((query === 'pot' || singularQuery === 'potato') && cLower.includes('potato')) return true;
+        if ((query === 'pyaz' || query === 'kanda' || singularQuery === 'onion') && (cLower.includes('onion') || cLower.includes('pyaz'))) return true;
+        if ((query === 'aalu' || query === 'alu' || query === 'batata' || singularQuery === 'potato') && (cLower.includes('potato') || cLower.includes('aalu') || cLower.includes('alu'))) return true;
+        if ((query === 'bhindi' || query === 'okra') && (cLower.includes('bhindi') || cLower.includes('okra'))) return true;
+        if ((query === 'chilli' || query === 'mirchi') && (cLower.includes('chilli') || cLower.includes('mirchi'))) return true;
+        if (singularQuery === 'banana' && cLower.includes('banana')) return true;
+
         return false;
       });
 

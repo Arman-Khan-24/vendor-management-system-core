@@ -3,10 +3,27 @@ import { CatalogMatcher } from '../../dist/services/ai/catalog.matcher.js';
 import { pool } from '../../dist/database/connection.js';
 
 const testCases = [
+  // Original 4 test cases
   'tomato 5kg pyaz 3kg aalu 10kg bhindi 2kg',
   'need: Tomatoes- 20, onion 15 kg, potato , banana 2dz',
   'tomaot 10kgg',
-  'tomato 5kg and potato 10kg'
+  'tomato 5kg and potato 10kg',
+
+  // 5 New Real-World Test Cases:
+  // Case 5: No commas, space-separated Hindi & English items
+  'tamatar 15kg batata 25kg pyaz 10kg kanda 5kg',
+  
+  // Case 6: "and"-joined items with conversational filler
+  'bhai please send tomato 12kg and onion 8kg and okra 4kg',
+  
+  // Case 7: Mixed plural cases, numbers without units, and abbreviations
+  'Tomatoes 30 kgs and Potatoes 20 and Banana 4 dozen',
+  
+  // Case 8: Multiline with mixed English and Hinglish shorthands
+  'bhindi 5kg\nchilli 2kg and mirchi 1kg\npyaz 20kg',
+  
+  // Case 9: Unintelligible / random non-order chat message
+  'kal subah rate kya hoga bhaiya?'
 ];
 
 async function runStressTest() {

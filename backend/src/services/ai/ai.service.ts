@@ -47,21 +47,31 @@ export class GeminiExtractionProvider implements IOrderExtractionProvider {
     }
 
     const catalogPrompt = catalog.map(c => `- ${c.name} (Unit: ${c.unit})`).join('\n');
-    const prompt = `You are OrderLedger AI order extractor.
-Customer order text:
-"${text}"
-
+    const prompt = `You are OrderLedger AI order extractor for a wholesale vendor.
 Vendor Catalog:
 ${catalogPrompt}
 
-Extract the products, quantities, and units into structured JSON adhering strictly to:
+Incoming customer message:
+"${text}"
+
+TASK:
+Extract ALL products, quantities, and units into structured JSON adhering strictly to:
 {
   "items": [
     { "product": "exact or closest catalog item name", "quantity": number, "unit": "kg/dozen/crate/etc" }
   ],
   "warnings": []
 }
-Output valid JSON only. Do not invent products outside the catalog.`;
+
+CRITICAL PARSING RULES:
+1. Comma-less and "and"-joined multi-item lists are PRIMARY formats. For example:
+   - "tomato 5kg pyaz 3kg aalu 10kg bhindi 2kg" MUST extract 4 distinct items: tomato 5kg, pyaz 3kg, aalu 10kg, bhindi 2kg.
+   - "tomato 5kg and potato 10kg" MUST extract 2 distinct items: tomato 5kg, potato 10kg.
+2. NEVER merge adjacent items or drop items. If the customer lists 4 items, you must extract all 4 items.
+3. Understand common Hinglish/Hindi synonyms against the catalog (e.g. pyaz/kanda -> onion, aalu/batata -> potato, bhindi -> okra, tamatar -> tomato).
+4. If a quantity has no unit specified (e.g., "Tomatoes- 20"), use the standard unit from the vendor catalog for that item, or "kg" if unspecified.
+5. If you cannot confidently identify any valid product or if the message is unintelligible gibberish, return "items": [] and include an explicit explanation in "warnings", e.g. ["Could not parse message into order items"]. NEVER return a garbled or merged single item.
+6. Output valid JSON only with NO markdown fences.`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
     const res = await fetch(url, {
@@ -110,9 +120,16 @@ export class GroqExtractionProvider implements IOrderExtractionProvider {
     }
 
     const catalogPrompt = catalog.map(c => `- ${c.name} (Unit: ${c.unit})`).join('\n');
-    const systemPrompt = `You are OrderLedger order parser. Given the vendor catalog, parse incoming customer orders into JSON with keys "items" (array of { product, quantity, unit }) and "warnings".
+    const systemPrompt = `You are OrderLedger AI order extractor for a wholesale vendor.
 Vendor Catalog:
-${catalogPrompt}`;
+${catalogPrompt}
+
+CRITICAL RULES:
+1. Comma-less and "and"-joined multi-item lists (e.g. "tomato 5kg pyaz 3kg aalu 10kg bhindi 2kg", "tomato 5kg and potato 10kg") are PRIMARY formats. Extract every single item individually.
+2. NEVER merge adjacent items or silently drop items.
+3. Understand Hindi/Hinglish synonyms (pyaz, aalu, bhindi, tamatar).
+4. If unintelligible, return "items": [] and warning "Could not parse message into order items".
+5. Return JSON with keys "items" (array of { product, quantity, unit }) and "warnings".`;
 
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -149,37 +166,94 @@ ${catalogPrompt}`;
 
 function simulateStructuredExtraction(text: string, catalog: CatalogItemContext[], provider: string, model: string) {
   // Built-in intelligent deterministic mock parser when test/simulating without live internet keys
-  const lines = text.split(/[\n,;]+/).map(l => l.trim()).filter(Boolean);
   const items: ExtractedOrderItem[] = [];
   const warnings: string[] = [];
 
-  for (const line of lines) {
-    // e.g. "tom 20kg", "potato 10 kg", "banana 5 doz", "make tomato 25kg"
-    const cleanedLine = line.replace(/^(make|change|add|give|send)\s+/i, '');
-    const match = cleanedLine.match(/([a-zA-Z\s]+?)\s*[:=-]?\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?$/i)
-      || cleanedLine.match(/^(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?\s+([a-zA-Z\s]+)$/i);
+  // Normalize common separators, conversational filler, and prefixes
+  let cleaned = text
+    .replace(/^(bhai|bhaiya|sir|dear|boss|hello|hi|hey)\b/i, '')
+    .replace(/\b(please\s+send|please|send|need|order|want|make|change|give)\b/gi, '')
+    .trim();
 
-    if (match) {
-      let rawName = '';
-      let rawQty = 0;
-      let rawUnit = '';
+  // Pre-split on ' and ', commas, semicolons, or newlines
+  const segments = cleaned
+    .split(/[\n,;]+|\s+and\s+/i)
+    .map(s => s.trim())
+    .filter(Boolean);
 
-      if (isNaN(parseFloat(match[1]))) {
-        rawName = match[1].trim();
-        rawQty = parseFloat(match[2]);
-        rawUnit = (match[3] || '').trim();
-      } else {
-        rawQty = parseFloat(match[1]);
-        rawUnit = (match[2] || '').trim();
-        rawName = match[3].trim();
+  // Helper unit normalizer
+  const normalizeUnit = (u: string, defaultUnit: string = 'kg') => {
+    const raw = (u || '').toLowerCase().trim();
+    if (!raw) return defaultUnit;
+    if (raw === 'kgg' || raw === 'kgs' || raw === 'kg') return 'kg';
+    if (raw === 'dz' || raw === 'doz' || raw === 'dozen') return 'dozen';
+    if (raw === 'crate' || raw === 'crates') return 'crate';
+    if (raw === 'gm' || raw === 'g' || raw === 'gram' || raw === 'grams') return 'g';
+    return raw;
+  };
+
+  for (const segment of segments) {
+    // Check if segment contains multiple items concatenated without commas (e.g., "tomato 5kg pyaz 3kg aalu 10kg bhindi 2kg")
+    // Regex pattern for item tokens: [name...] [qty] [optional unit]
+    const tokenRegex = /([a-zA-Z\s]+?)\s*[:=-]?\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?(?=\s+[a-zA-Z]|$)/gi;
+    const matches = Array.from(segment.matchAll(tokenRegex));
+
+    if (matches && matches.length > 1) {
+      for (const m of matches) {
+        let rawName = m[1].replace(/^(and|need|order)\s+/i, '').trim();
+        let rawQty = parseFloat(m[2]);
+        let rawUnit = normalizeUnit(m[3]);
+
+        if (rawName && !isNaN(rawQty) && rawQty > 0) {
+          items.push({
+            product: rawName,
+            quantity: rawQty,
+            unit: rawUnit
+          });
+        }
       }
+    } else {
+      // Single item per segment
+      // Pattern 1: Name [qty] [unit?] e.g. "Tomatoes- 20", "tomato 5kg", "onion 15 kg"
+      // Pattern 2: [qty] [unit?] Name e.g. "5kg tomato", "2dz banana"
+      const p1 = segment.match(/^([a-zA-Z\s]+?)\s*[:=-]?\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?$/i);
+      const p2 = segment.match(/^(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?\s+([a-zA-Z\s]+)$/i);
 
-      items.push({
-        product: rawName,
-        quantity: rawQty,
-        unit: rawUnit || 'kg'
-      });
+      if (p1) {
+        let rawName = p1[1].replace(/^(and|need|order)\s+/i, '').trim();
+        let rawQty = parseFloat(p1[2]);
+        let rawUnit = normalizeUnit(p1[3]);
+
+        if (rawName && !isNaN(rawQty) && rawQty > 0) {
+          items.push({
+            product: rawName,
+            quantity: rawQty,
+            unit: rawUnit
+          });
+        }
+      } else if (p2) {
+        let rawQty = parseFloat(p2[1]);
+        let rawUnit = normalizeUnit(p2[2]);
+        let rawName = p2[3].replace(/^(and|need|order)\s+/i, '').trim();
+
+        if (rawName && !isNaN(rawQty) && rawQty > 0) {
+          items.push({
+            product: rawName,
+            quantity: rawQty,
+            unit: rawUnit
+          });
+        }
+      } else {
+        // Unparseable fragment (e.g. "potato ," or random words without numbers)
+        // Never fabricate or garble! Record a warning.
+        warnings.push(`Could not confidently parse fragment: "${segment}"`);
+      }
     }
+  }
+
+  // Rule 2: If we couldn't parse any valid item, explicitly flag warning
+  if (items.length === 0) {
+    warnings.push('Could not parse this message into any confident order items.');
   }
 
   return {
