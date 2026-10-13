@@ -43,21 +43,45 @@ export class CatalogMatcher {
         .replace(/es$/i, '')
         .replace(/s$/i, '');
 
-      // 1. Exact Name Match (strictly full string equality)
-      const exactMatch = catalog.find(c => {
+      // 1. Check exact match candidates
+      const exactCandidates = catalog.filter(c => {
         const cLower = c.name.toLowerCase();
         const cSingular = cLower.replace(/es$/i, '').replace(/s$/i, '');
         return cLower === query || (query.length > 3 && cSingular === singularQuery);
       });
 
-      if (exactMatch) {
+      if (exactCandidates.length === 1) {
+        const found = exactCandidates[0];
+        // If customer provided a unit, ensure it matches or inherit catalog unit
         matchedItems.push({
-          productId: exactMatch.id,
-          productName: exactMatch.name,
+          productId: found.id,
+          productName: found.name,
           quantity: qty,
-          unit: item.unit || exactMatch.unit,
-          unitPrice: exactMatch.current_price,
-          totalPrice: qty * exactMatch.current_price
+          unit: item.unit || found.unit, // Inherits catalog base unit
+          unitPrice: found.current_price,
+          totalPrice: qty * found.current_price
+        });
+        continue;
+      } else if (exactCandidates.length > 1) {
+        // Multiple exact matches (e.g., "Watermelon" in kg vs "Watermelon" in piece)
+        if (item.unit) {
+          const unitMatch = exactCandidates.find(c => c.unit.toLowerCase() === item.unit.toLowerCase());
+          if (unitMatch) {
+            matchedItems.push({
+              productId: unitMatch.id,
+              productName: unitMatch.name,
+              quantity: qty,
+              unit: unitMatch.unit,
+              unitPrice: unitMatch.current_price,
+              totalPrice: qty * unitMatch.current_price
+            });
+            continue;
+          }
+        }
+        // Unit was not specified or didn't match: flag ambiguity!
+        ambiguousItems.push({
+          input: item.product,
+          candidates: exactCandidates.map(c => `${c.name} (${c.unit})`)
         });
         continue;
       }
@@ -79,6 +103,7 @@ export class CatalogMatcher {
         if ((query === 'bhindi' || query === 'okra') && (cLower.includes('bhindi') || cLower.includes('okra'))) return true;
         if ((query === 'chilli' || query === 'mirchi') && (cLower.includes('chilli') || cLower.includes('mirchi'))) return true;
         if (singularQuery === 'banana' && cLower.includes('banana')) return true;
+        if (singularQuery === 'watermelon' && cLower.includes('watermelon')) return true;
 
         return false;
       });
@@ -89,15 +114,32 @@ export class CatalogMatcher {
           productId: found.id,
           productName: found.name,
           quantity: qty,
-          unit: item.unit || found.unit,
+          unit: item.unit || found.unit, // Inherits catalog base unit
           unitPrice: found.current_price,
           totalPrice: qty * found.current_price
         });
       } else if (candidates.length > 1) {
-        // Multiple products plausible - do NOT silently guess
+        // If customer specified a unit, check if that resolves the ambiguity
+        if (item.unit) {
+          const unitMatches = candidates.filter(c => c.unit.toLowerCase() === item.unit.toLowerCase());
+          if (unitMatches.length === 1) {
+            const found = unitMatches[0];
+            matchedItems.push({
+              productId: found.id,
+              productName: found.name,
+              quantity: qty,
+              unit: found.unit,
+              unitPrice: found.current_price,
+              totalPrice: qty * found.current_price
+            });
+            continue;
+          }
+        }
+
+        // Multiple products/units plausible - do NOT silently guess
         ambiguousItems.push({
           input: item.product,
-          candidates: candidates.map(c => c.name)
+          candidates: candidates.map(c => `${c.name} (${c.unit})`)
         });
       } else {
         // Not in catalog

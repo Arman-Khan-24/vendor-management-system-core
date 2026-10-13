@@ -181,13 +181,14 @@ function simulateStructuredExtraction(text: string, catalog: CatalogItemContext[
     .map(s => s.trim())
     .filter(Boolean);
 
-  // Helper unit normalizer
-  const normalizeUnit = (u: string, defaultUnit: string = 'kg') => {
+  // Helper unit normalizer - leaves empty if not specified
+  const normalizeUnit = (u: string) => {
     const raw = (u || '').toLowerCase().trim();
-    if (!raw) return defaultUnit;
+    if (!raw) return '';
     if (raw === 'kgg' || raw === 'kgs' || raw === 'kg') return 'kg';
     if (raw === 'dz' || raw === 'doz' || raw === 'dozen') return 'dozen';
     if (raw === 'crate' || raw === 'crates') return 'crate';
+    if (raw === 'pc' || raw === 'pcs' || raw === 'piece' || raw === 'pieces') return 'piece';
     if (raw === 'gm' || raw === 'g' || raw === 'gram' || raw === 'grams') return 'g';
     return raw;
   };
