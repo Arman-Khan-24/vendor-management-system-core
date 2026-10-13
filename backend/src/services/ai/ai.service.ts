@@ -229,9 +229,9 @@ export class GroqExtractionProvider implements IOrderExtractionProvider {
   private model: string;
   private visionModel: string;
 
-  constructor(apiKey: string, model: string = 'llama-3.3-70b-versatile', visionModel: string = 'qwen/qwen3.8-27b') {
+  constructor(apiKey: string, model: string = 'qwen/qwen3.8-27b', visionModel: string = 'qwen/qwen3.8-27b') {
     this.apiKey = apiKey;
-    this.model = model;
+    this.model = process.env.AI_FALLBACK_MODEL || model;
     this.visionModel = process.env.AI_FALLBACK_VISION_MODEL || visionModel;
   }
 

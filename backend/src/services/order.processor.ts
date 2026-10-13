@@ -120,7 +120,7 @@ export class OrderProcessingEngine {
     }
 
     // Helper to sanitize Unicode strings for PostgreSQL databases initialized with WIN1252
-    const sanitizeForDb = (str: string) => str ? str.replace(/[^\x00-\x7F]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`) : '';
+    const sanitizeForDb = (str: string) => str ? str.replace(/[^\x00-\x7F]/g, c => `[U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}]`) : '';
 
     // 3. Audit Successful Inference with model, duration, and input_type
     await query(
