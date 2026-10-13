@@ -119,6 +119,9 @@ export class OrderProcessingEngine {
       return { success: false, reason: 'ai_extraction_failed', error: err.message };
     }
 
+    // Helper to sanitize Unicode strings for PostgreSQL databases initialized with WIN1252
+    const sanitizeForDb = (str: string) => str ? str.replace(/[^\x00-\x7F]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`) : '';
+
     // 3. Audit Successful Inference with model, duration, and input_type
     await query(
       `INSERT INTO ai_extraction_audits 
@@ -128,15 +131,15 @@ export class OrderProcessingEngine {
         businessId,
         inboundMessageId,
         'gemini',
-        'gemini-1.5-flash',
+        process.env.AI_PRIMARY_MODEL || 'gemini-2.5-flash',
         extraction.provider,
         extraction.model,
         extraction.wasFallback,
-        auditInputText,
+        sanitizeForDb(auditInputText),
         isImage ? 'image' : 'text',
         mediaUrl || null,
-        extraction.rawResponse || '',
-        JSON.stringify({ items: extraction.items, warnings: extraction.warnings }),
+        sanitizeForDb(extraction.rawResponse || ''),
+        sanitizeForDb(JSON.stringify({ items: extraction.items, warnings: extraction.warnings })),
         Date.now() - startTime
       ]
     );

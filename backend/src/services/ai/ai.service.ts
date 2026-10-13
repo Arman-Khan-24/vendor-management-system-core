@@ -64,10 +64,16 @@ TASK:
 Extract ALL products, quantities, and units into structured JSON adhering strictly to:
 {
   "items": [
-    { "product": "exact or closest catalog item name", "quantity": number, "unit": "kg/dozen/crate/etc" }
+    { "product": "exact product name as written by customer (e.g. 'tomato' or 'टमाटर', NOT a specific variety)", "quantity": number, "unit": "kg/dozen/crate/etc" }
   ],
   "warnings": []
 }
+
+CRITICAL AMBIGUITY RULES:
+1. NEVER guess or select a specific variety if the customer wrote a generic term!
+   - If customer says "tomato" or "टमाटर", output "Tomato" or "टमाटर", NEVER "Tomato (Hybrid)" or "Tomato (Country/Naati)".
+   - If customer says "banana", output "Banana", NEVER "Banana (Robusta)" or "Banana (Yellaki)".
+   - The downstream catalog validation will automatically ask the customer to clarify when multiple varieties exist.
 
 CRITICAL PARSING RULES:
 1. Comma-less and "and"-joined multi-item lists are PRIMARY formats. For example:
@@ -151,11 +157,12 @@ Accurately transcribe and extract ALL items, quantities, and units into structur
 VISION EXTRACTION RULES:
 1. Handle realistic kitchen conditions: angled photos, uneven lighting, shadows, handwritten script, cursive, or ink smudges.
 2. Full multilingual support: Accurately read handwritten notes written in Hindi (Devanagari script like "टमाटर", "प्याज़", "आलू"), English, or mixed script (Devanagari + English in the same note). Map Devanagari units (किलो/किग्रा -> kg, दर्जन -> dozen).
-3. CROSSED OUT ITEMS / CORRECTIONS: If an item is struck through, crossed out (e.g. ~~10kg tomato~~ 15kg tomato), or modified with an arrow/scribble, take ONLY the final intended correction. Do NOT include crossed-out items.
-4. Messy lists: Items may be in multi-column, clustered, or space-separated lists. Extract every single non-crossed-out line item.
-5. If a handwritten word or quantity is illegible, blurry, or ambiguous, DO NOT guess wildly. Include an explicit warning in "warnings" (e.g. ["Illegible quantity for line item near bottom"]).
-6. If the image is completely blank, unintelligible, or not an order (e.g. photo of random object), return "items": [] and warning "Image does not appear to contain readable order items".
-7. Output valid JSON only with NO markdown fences.`;
+3. AMBIGUOUS PRODUCTS / GENERIC TERMS: If the note writes a generic product name (e.g. "टमाटर" / "Tomato") and the catalog contains multiple varieties (e.g. "Tomato (Hybrid)" vs "Tomato (Country/Naati)"), NEVER guess or choose one on your own! Output the generic written name ("Tomato" or "टमाटर"). Downstream catalog validation MUST flag it for customer clarification.
+4. CROSSED OUT ITEMS / CORRECTIONS: If an item is struck through, crossed out (e.g. ~~10kg tomato~~ 15kg tomato), or modified with an arrow/scribble, take ONLY the final intended correction. Do NOT include crossed-out items.
+5. Messy lists: Items may be in multi-column, clustered, or space-separated lists. Extract every single non-crossed-out line item.
+6. If a handwritten word or quantity is illegible, blurry, or ambiguous, DO NOT guess wildly. Include an explicit warning in "warnings" (e.g. ["Illegible quantity for line item near bottom"]).
+7. If the image is completely blank, unintelligible, or not an order (e.g. photo of random object), return "items": [] and warning "Image does not appear to contain readable order items".
+8. Output valid JSON only with NO markdown fences.`;
 
     const base64Data = imageBuffer.toString('base64');
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
@@ -241,9 +248,10 @@ ${catalogPrompt}
 CRITICAL RULES:
 1. Comma-less and "and"-joined multi-item lists (e.g. "tomato 5kg pyaz 3kg aalu 10kg bhindi 2kg", "tomato 5kg and potato 10kg") are PRIMARY formats. Extract every single item individually.
 2. NEVER merge adjacent items or silently drop items.
-3. Understand Hindi/Hinglish synonyms (pyaz, aalu, bhindi, tamatar).
-4. If unintelligible, return "items": [] and warning "Could not parse message into order items".
-5. Return JSON with keys "items" (array of { product, quantity, unit }) and "warnings".`;
+3. Understand Hindi/Hinglish synonyms in Roman and Devanagari script (pyaz, aalu, bhindi, tamatar).
+4. AMBIGUOUS PRODUCTS: If the customer writes a generic term (e.g. "tomato", "tamatar", "onion") and multiple varieties exist in the catalog, DO NOT pick one variety. Output the generic name so downstream catalog matching requests clarification.
+5. If unintelligible, return "items": [] and warning "Could not parse message into order items".
+6. Return JSON with keys "items" (array of { product, quantity, unit }) and "warnings".`;
 
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -286,6 +294,7 @@ CRITICAL RULES:
     const systemPrompt = `You are OrderLedger AI Vision order extractor for a wholesale vendor.
 Transcribe and parse order images (handwritten or printed) into JSON with keys "items" (array of { product, quantity, unit }) and "warnings".
 Ignore crossed-out/struck-through items.
+CRITICAL AMBIGUITY RULE: If the note writes a generic product name (e.g. "Tomato" or "टमाटर") and the vendor catalog contains multiple varieties (e.g. "Tomato (Hybrid)" vs "Tomato (Country/Naati)"), NEVER choose or guess one variety. Return the exact generic term written ("Tomato" or "टमाटर"). Downstream validation will flag it for customer clarification.
 Vendor Catalog:
 ${catalogPrompt}`;
 
