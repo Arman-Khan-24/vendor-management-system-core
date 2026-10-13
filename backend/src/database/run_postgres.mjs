@@ -17,14 +17,21 @@ const pg = new EmbeddedPostgres({
   port: 5433,
   user: 'postgres',
   password: 'password',
-  persistent: false
+  persistent: true
 });
 
 async function main() {
   try {
-    await pg.initialise();
+    const isInitialized = fs.existsSync(path.join(dbPath, 'PG_VERSION'));
+    if (!isInitialized) {
+      await pg.initialise();
+    }
     await pg.start();
-    await pg.createDatabase('orderledger');
+    try {
+      await pg.createDatabase('orderledger');
+    } catch (e) {
+      // Database might already exist
+    }
     console.log('✅ Real PostgreSQL daemon active at postgresql://postgres:password@localhost:5433/orderledger');
     console.log('Ready to receive connections.');
   } catch (err) {
