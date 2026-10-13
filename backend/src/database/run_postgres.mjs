@@ -28,7 +28,15 @@ async function main() {
     }
     await pg.start();
     try {
-      await pg.createDatabase('orderledger');
+      const { default: pkg } = await import('pg');
+      const { Client } = pkg;
+      const client = new Client({ connectionString: 'postgresql://postgres:password@localhost:5433/postgres' });
+      await client.connect();
+      const dbExists = await client.query("SELECT 1 FROM pg_database WHERE datname = 'orderledger'");
+      if (dbExists.rows.length === 0) {
+        await client.query("CREATE DATABASE orderledger WITH ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0");
+      }
+      await client.end();
     } catch (e) {
       // Database might already exist
     }
