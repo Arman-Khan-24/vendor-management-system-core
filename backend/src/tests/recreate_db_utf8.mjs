@@ -87,7 +87,15 @@ async function recreateDatabaseWithUtf8() {
       const keys = Object.keys(row);
       const cols = keys.map(k => `"${k}"`).join(', ');
       const placeholders = keys.map((_, idx) => `$${idx + 1}`).join(', ');
-      const values = keys.map(k => row[k]);
+      
+      // Correctly serialize JS objects/arrays to JSON strings for jsonb/json columns
+      const values = keys.map(k => {
+        const val = row[k];
+        if (val !== null && typeof val === 'object' && !(val instanceof Date) && !Buffer.isBuffer(val)) {
+          return JSON.stringify(val);
+        }
+        return val;
+      });
 
       try {
         await newPool.query(
@@ -95,7 +103,8 @@ async function recreateDatabaseWithUtf8() {
           values
         );
       } catch (err) {
-        console.error(`     Error restoring row in ${table}:`, err.message);
+        console.error(`❌ CRITICAL: Error restoring row in ${table}:`, err.message);
+        throw new Error(`Restore failed on table "${table}": ${err.message}`);
       }
     }
   }
