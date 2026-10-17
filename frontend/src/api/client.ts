@@ -1,4 +1,4 @@
-const API_BASE = '/api';
+const API_BASE = ((import.meta as any).env?.VITE_API_URL || '').replace(/\/$/, '') + '/api';
 
 export class ApiClient {
   private static getToken(): string | null {
