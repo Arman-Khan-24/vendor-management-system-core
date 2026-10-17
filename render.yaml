@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: orderledger-api
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: AI_PRIMARY_PROVIDER
+        value: gemini
+      - key: AI_PRIMARY_MODEL
+        value: gemini-3.1-flash-lite
+      - key: AI_PRIMARY_API_KEY
+        sync: false
+      - key: AI_FALLBACK_PROVIDER
+        value: groq
+      - key: AI_FALLBACK_MODEL
+        value: qwen/qwen3.8-27b
+      - key: AI_FALLBACK_API_KEY
+        sync: false
