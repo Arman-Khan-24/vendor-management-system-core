@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "OrderLedger B2B Multi-Tenant Backend API",
   "main": "dist/server.js",
+  "type": "module",
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
