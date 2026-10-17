@@ -39,7 +39,7 @@ async function runDevanagariSuite() {
   console.log(`Active Catalog Products:`);
   catalog.forEach(c => console.log(`  - ${c.name} (${c.unit}) @ ₹${c.current_price}`));
 
-  const apiKey = process.env.AI_PRIMARY_API_KEY || 'process.env.GEMINI_API_KEY';
+  const apiKey = process.env.AI_PRIMARY_API_KEY || 'process.env.GEMINI_API_KEY || ''';
   const model = process.env.AI_PRIMARY_MODEL || 'gemini-2.5-flash';
   const provider = new GeminiExtractionProvider(apiKey, model);
 

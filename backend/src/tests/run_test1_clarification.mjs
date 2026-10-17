@@ -6,7 +6,7 @@ import { CatalogMatcher } from '../../dist/services/ai/catalog.matcher.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const key = 'process.env.GEMINI_API_KEY';
+const key = 'process.env.GEMINI_API_KEY || ''';
 const provider = new GeminiExtractionProvider(key, 'gemini-3.1-flash-lite');
 
 const catalog = [

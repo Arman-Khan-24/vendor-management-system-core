@@ -11,7 +11,7 @@ async function testGroqVision() {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': 'Bearer process.env.GROQ_API_KEY'
+      'Authorization': 'Bearer process.env.GROQ_API_KEY || '''
     },
     body: JSON.stringify({
       model: 'qwen/qwen3.8-27b',
