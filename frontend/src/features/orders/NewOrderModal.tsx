@@ -1,196 +1,51 @@
-import React, { useState } from 'react';
-import { Button, Input } from '../../components/ui';
-import { Customer, Product } from '../../types';
-import { formatCurrency } from '../../utils/formatters';
-import { Plus, Trash2, ShoppingCart } from 'lucide-react';
+import { useState } from 'react';
+import { Plus, ShoppingBag, Trash2 } from 'lucide-react';
+import { Button, EmptyState, ErrorNotice, Input, Modal, Select, Textarea } from '../../components/ui';
+import type { Customer, OrderInput, Product } from '../../types';
+import { errorMessage } from '../../utils/formatters';
+import { useBusiness } from '../settings/businessSettings';
 
-interface NewOrderModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  customers: Customer[];
-  products: Product[];
-  onSubmit: (data: { customerId: string; notes?: string; items: { productId: string; quantity: number }[] }) => void;
-}
-
-export function NewOrderModal({
-  isOpen,
-  onClose,
-  customers,
-  products,
-  onSubmit
-}: NewOrderModalProps) {
-  if (!isOpen) return null;
-
-  const [customerId, setCustomerId] = useState<string>(customers[0]?.id || '');
-  const [notes, setNotes] = useState<string>('');
-  const [selectedItems, setSelectedItems] = useState<Array<{ productId: string; quantity: number }>>([
-    { productId: products[0]?.id || '', quantity: 1 }
-  ]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const addItemRow = () => {
-    if (products.length > 0) {
-      setSelectedItems([...selectedItems, { productId: products[0].id, quantity: 1 }]);
-    }
-  };
-
-  const removeItemRow = (idx: number) => {
-    if (selectedItems.length > 1) {
-      setSelectedItems(selectedItems.filter((_, i) => i !== idx));
-    }
-  };
-
-  const updateItemRow = (idx: number, field: 'productId' | 'quantity', val: any) => {
-    const updated = [...selectedItems];
-    updated[idx] = { ...updated[idx], [field]: val };
-    setSelectedItems(updated);
-  };
-
-  // Live order total preview
-  const liveTotal = selectedItems.reduce((acc, it) => {
-    const p = products.find(prod => prod.id === it.productId);
-    const price = p ? p.current_price : 0;
-    return acc + (price * (it.quantity || 0));
-  }, 0);
-
-  const handleFormSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customerId) return;
-    setIsSubmitting(true);
+export function NewOrderModal({ isOpen, onClose, customers, products, onSubmit, onSetup }: { isOpen: boolean; onClose: () => void; customers: Customer[]; products: Product[]; onSubmit: (data: OrderInput) => Promise<void>; onSetup: (tab: string) => void }) {
+  const { settings, money } = useBusiness();
+  const availableCustomers = customers.filter(c => c.active);
+  const availableProducts = products.filter(p => p.active);
+  const [customerId, setCustomerId] = useState(availableCustomers[0]?.id || '');
+  const [notes, setNotes] = useState('');
+  const [items, setItems] = useState<{ key: string; productId: string; quantity: string }[]>([{ key: crypto.randomUUID(), productId: availableProducts[0]?.id || '', quantity: '1' }]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const subtotal = items.reduce((sum, item) => sum + Math.round(Number(availableProducts.find(p => p.id === item.productId)?.current_price || 0) * Number(item.quantity || 0) * 100) / 100, 0);
+  const tax = Math.round(subtotal * settings.billing.taxRate) / 100;
+  const update = (key: string, data: Partial<typeof items[number]>) => setItems(list => list.map(i => i.key === key ? { ...i, ...data } : i));
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true); setError(null);
     try {
-      await onSubmit({
-        customerId,
-        notes,
-        items: selectedItems.filter(it => it.quantity > 0)
-      });
+      if (!customerId || !availableCustomers.some(c => c.id === customerId)) throw new Error('Choose an active customer.');
+      if (items.some(i => !i.productId || !Number.isFinite(Number(i.quantity)) || Number(i.quantity) <= 0)) throw new Error('Each product needs a quantity greater than zero.');
+      if (new Set(items.map(i => i.productId)).size !== items.length) throw new Error('A product is listed twice. Combine its quantities in one row.');
+      await onSubmit({ customerId, notes: notes.trim(), items: items.map(({ productId, quantity }) => ({ productId, quantity: Number(quantity) })) });
       onClose();
-    } finally {
-      setIsSubmitting(false);
-    }
+    } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-3xl max-w-lg w-full max-h-[92vh] overflow-y-auto p-6 shadow-2xl border border-slate-100">
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-5">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-brand-50 text-brand-600 flex items-center justify-center">
-              <ShoppingCart className="w-4 h-4" />
-            </div>
-            <h3 className="text-lg font-bold text-slate-900">Create New Order</h3>
-          </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-slate-100 text-slate-400">
-            ✕
-          </button>
-        </div>
-
-        <form onSubmit={handleFormSubmit} className="space-y-5">
-          {/* Customer Selection */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">
-              Select Customer
-            </label>
-            <select
-              value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
-              required
-            >
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.phone})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Line Items */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                Order Items
-              </label>
-              <button
-                type="button"
-                onClick={addItemRow}
-                className="text-xs font-bold text-brand-600 hover:text-brand-700 flex items-center gap-1"
-              >
-                <Plus className="w-3.5 h-3.5" /> Add Product
-              </button>
-            </div>
-
-            <div className="space-y-2.5">
-              {selectedItems.map((item, idx) => {
-                const prod = products.find(p => p.id === item.productId);
-                return (
-                  <div key={idx} className="flex items-center gap-2 p-2.5 bg-slate-50 rounded-2xl border border-slate-100">
-                    <select
-                      value={item.productId}
-                      onChange={(e) => updateItemRow(idx, 'productId', e.target.value)}
-                      className="flex-1 bg-white px-3 py-2 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none"
-                    >
-                      {products.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} ({formatCurrency(p.current_price)}/{p.unit})
-                        </option>
-                      ))}
-                    </select>
-
-                    <input
-                      type="number"
-                      step="any"
-                      min="0.1"
-                      value={item.quantity}
-                      onChange={(e) => updateItemRow(idx, 'quantity', parseFloat(e.target.value) || 0)}
-                      className="w-20 bg-white px-3 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-center focus:outline-none"
-                      placeholder="Qty"
-                      required
-                    />
-
-                    <span className="text-xs font-medium text-slate-500 w-12 text-center">
-                      {prod?.unit || ''}
-                    </span>
-
-                    {selectedItems.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeItemRow(idx)}
-                        className="p-1.5 text-slate-400 hover:text-rose-500"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Notes */}
-          <Input
-            label="Order Notes (Optional)"
-            placeholder="e.g. Deliver before 7:00 AM"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-
-          {/* Live Preview Card */}
-          <div className="p-4 bg-emerald-50/60 border border-emerald-100 rounded-2xl flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-900 uppercase tracking-wider">Estimated Total</span>
-            <span className="text-xl font-black text-emerald-900">{formatCurrency(liveTotal)}</span>
-          </div>
-
-          {/* Submit Buttons */}
-          <div className="flex items-center justify-end gap-3 pt-3">
-            <Button variant="outline" size="sm" onClick={onClose} disabled={isSubmitting}>
-              Cancel
-            </Button>
-            <Button variant="primary" size="md" type="submit" disabled={isSubmitting || liveTotal <= 0}>
-              {isSubmitting ? 'Creating Order...' : 'Create Order'}
-            </Button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
+  const ready = availableCustomers.length > 0 && availableProducts.length > 0;
+  return <Modal isOpen={isOpen} onClose={onClose} title="Create an order" wide busy={busy}>
+    {!ready ? <EmptyState icon={<ShoppingBag size={28} />} title={!availableProducts.length ? 'Add your products first' : 'Add your first customer'} description="An order needs an active customer and at least one product." action={<Button onClick={() => { onClose(); onSetup(!availableProducts.length ? 'products' : 'customers'); }}>{!availableProducts.length ? 'Open catalog' : 'Add a customer'}</Button>} /> :
+      <form className="stack" onSubmit={submit}>
+        <ErrorNotice message={error} />
+        <Select label="Customer" value={customerId} required onChange={e => setCustomerId(e.target.value)}><option value="" disabled>Choose a customer</option>{availableCustomers.map(c => <option key={c.id} value={c.id}>{c.name} · {c.phone}</option>)}</Select>
+        <div className="row between"><h3>Order items</h3><Button variant="ghost" size="sm" disabled={items.length >= availableProducts.length} onClick={() => setItems(list => [...list, { key: crypto.randomUUID(), productId: availableProducts.find(p => !list.some(i => i.productId === p.id))?.id || '', quantity: '1' }])}><Plus size={17} aria-hidden="true" />Add item</Button></div>
+        {items.map((item, index) => {
+          const product = availableProducts.find(p => p.id === item.productId);
+          return <div key={item.key} className="order-line"><div className="order-line-fields">
+            <Select label={'Product ' + (index + 1)} value={item.productId} required onChange={e => update(item.key, { productId: e.target.value })}>{availableProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</Select>
+            <Input label={'Quantity ' + (index + 1)} type="number" step="0.01" min="0.01" value={item.quantity} required onChange={e => update(item.key, { quantity: e.target.value })} />
+            <Button className="icon-button" variant="ghost" aria-label={'Remove item ' + (index + 1)} disabled={items.length === 1} onClick={() => setItems(list => list.filter(i => i.key !== item.key))}><Trash2 size={18} /></Button>
+          </div><div className="order-line-total"><span>{money(product?.current_price)} / {product?.unit} · Quantity in {product?.unit}</span><strong>{money(Number(product?.current_price || 0) * Number(item.quantity || 0))}</strong></div></div>;
+        })}
+        <Textarea label="Order notes" value={notes} maxLength={500} onChange={e => setNotes(e.target.value)} placeholder="Delivery instructions or anything the team should know." rows={2} />
+        {tax > 0 && <div className="row between muted small"><span>Subtotal {money(subtotal)} + {settings.billing.taxRate}% tax</span><span>{money(tax)} tax</span></div>}
+        <div className="total-box"><div><strong style={{ fontSize: 14 }}>Order total</strong><p className="small">Prices are saved when you place the order.</p></div><strong className="numeric">{money(subtotal + tax)}</strong></div>
+        <div className="form-actions"><Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button><Button type="submit" busy={busy}>Create order</Button></div>
+      </form>}
+  </Modal>;
 }

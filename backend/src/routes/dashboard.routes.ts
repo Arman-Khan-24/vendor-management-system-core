@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { authenticate } from '../middleware/auth.middleware.js';
+import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
 import { DashboardService } from '../services/dashboard.service.js';
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireRoles('OWNER', 'STAFF'));
 
 router.get('/summary', async (req, res, next) => {
   try {

@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { authenticate } from '../middleware/auth.middleware.js';
-import { validateBody } from '../middleware/validate.middleware.js';
+import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
+import { validateBody, validateUuidParam, getPagination } from '../middleware/validate.middleware.js';
 import { createOrderSchema, updateOrderStatusSchema } from '../validators/schemas.js';
 import { OrderRepository } from '../repositories/order.repo.js';
 import { OrderService } from '../services/order.service.js';
@@ -9,13 +9,14 @@ import { OrderStatus } from '../models/types.js';
 
 const router = Router();
 router.use(authenticate);
+router.param('id', validateUuidParam);
 
 router.get('/', async (req, res, next) => {
   try {
     const status = req.query.status as OrderStatus | undefined;
     const customerId = req.query.customerId as string | undefined;
-    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
-    const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
+    const { limit, offset } = getPagination(req.query, 50);
+    if (status && !['Received', 'Packed', 'Delivered'].includes(status)) throw new AppError('Invalid order status filter.', 400);
 
     const orders = await OrderRepository.list({
       businessId: req.businessId!,
@@ -30,7 +31,7 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-router.post('/', validateBody(createOrderSchema), async (req, res, next) => {
+router.post('/', requireRoles('OWNER', 'STAFF'), validateBody(createOrderSchema), async (req, res, next) => {
   try {
     const order = await OrderService.createOrder({
       businessId: req.businessId!,
@@ -63,6 +64,7 @@ router.get('/:id', async (req, res, next) => {
 
 router.patch('/:id/status', validateBody(updateOrderStatusSchema), async (req, res, next) => {
   try {
+    if (req.user!.role === 'DELIVERY' && req.body.status !== 'Delivered') throw new AppError('Delivery users can only mark packed orders as delivered.', 403);
     const updated = await OrderService.changeStatus({
       businessId: req.businessId!,
       orderId: req.params.id,

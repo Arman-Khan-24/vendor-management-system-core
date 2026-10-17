@@ -1,3 +1,5 @@
+import type { BusinessSettings } from '../validators/business-settings.schemas.js';
+
 export type UserRole = 'OWNER' | 'STAFF' | 'DELIVERY';
 
 export interface User {
@@ -20,6 +22,7 @@ export interface Business {
   currency: string;
   logo_url: string | null;
   invoice_trigger: 'Packed' | 'Delivered';
+  settings: BusinessSettings;
   created_at: Date;
   updated_at: Date;
 }
@@ -41,6 +44,7 @@ export interface Product {
   name: string;
   unit: string;
   current_price: number;
+  category: string;
   active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -62,6 +66,8 @@ export interface Order {
   confirmed_at: Date | null;
   packed_at: Date | null;
   delivered_at: Date | null;
+  tax_rate: number;
+  credit_terms_days: number;
 }
 
 export interface OrderItem {
@@ -73,6 +79,7 @@ export interface OrderItem {
   unit: string;
   unit_price_at_order: number; // Frozen price
   total_price: number;
+  product_name_at_order: string;
 }
 
 export interface OrderStatusHistory {
@@ -93,6 +100,10 @@ export interface Invoice {
   order_id: string;
   customer_id: string;
   invoice_no: number;
+  invoice_prefix: string;
+  tax_rate: number;
+  credit_terms_days: number;
+  billing_footer: string;
   subtotal: number;
   tax: number;
   total: number;

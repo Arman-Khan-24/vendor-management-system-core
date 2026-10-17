@@ -1,13 +1,14 @@
 import { Router } from 'express';
-import { authenticate } from '../middleware/auth.middleware.js';
-import { validateBody } from '../middleware/validate.middleware.js';
+import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
+import { validateBody, validateUuidParam, getPagination } from '../middleware/validate.middleware.js';
 import { createCustomerSchema, updateCustomerSchema } from '../validators/schemas.js';
 import { CustomerRepository } from '../repositories/customer.repo.js';
 import { PaymentRepository } from '../repositories/payment.repo.js';
 import { AppError } from '../middleware/errorHandler.js';
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireRoles('OWNER', 'STAFF'));
+router.param('id', validateUuidParam);
 
 router.get('/', async (req, res, next) => {
   try {
@@ -15,6 +16,7 @@ router.get('/', async (req, res, next) => {
     const activeOnly = req.query.all !== 'true';
     const customers = await CustomerRepository.list({
       businessId: req.businessId!,
+      ...getPagination(req.query),
       search,
       activeOnly
     });
@@ -78,7 +80,7 @@ router.delete('/:id', async (req, res, next) => {
     if (!deleted) {
       throw new AppError('Customer not found', 404);
     }
-    res.json({ success: true, message: 'Customer deleted' });
+    res.json({ success: true, message: 'Customer archived' });
   } catch (err) {
     next(err);
   }

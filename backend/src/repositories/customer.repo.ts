@@ -1,5 +1,6 @@
 import { query } from '../database/connection.js';
 import { Customer } from '../models/types.js';
+import { BusinessRepository } from './business.repo.js';
 
 export interface CustomerWithBalance extends Customer {
   total_billed: number;
@@ -13,24 +14,26 @@ export class CustomerRepository {
   static async list({
     businessId,
     search,
-    activeOnly = true
+    activeOnly = true,
+    limit = 100,
+    offset = 0
   }: {
     businessId: string;
     search?: string;
     activeOnly?: boolean;
+    limit?: number;
+    offset?: number;
   }): Promise<CustomerWithBalance[]> {
     let sql = `
       SELECT 
         c.*,
-        COALESCE(SUM(DISTINCT i.total), 0) AS total_billed,
-        COALESCE(SUM(DISTINCT p.amount), 0) AS total_paid,
-        (COALESCE(SUM(DISTINCT i.total), 0) - COALESCE(SUM(DISTINCT p.amount), 0)) AS outstanding_balance,
-        MAX(o.created_at) AS last_order_date,
-        MAX(p.created_at) AS last_payment_date
+        COALESCE((SELECT SUM(i.total) FROM invoices i WHERE i.customer_id = c.id AND i.business_id = c.business_id), 0) AS total_billed,
+        COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.customer_id = c.id AND p.business_id = c.business_id), 0) AS total_paid,
+        COALESCE((SELECT SUM(i.total) FROM invoices i WHERE i.customer_id = c.id AND i.business_id = c.business_id), 0) -
+        COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.customer_id = c.id AND p.business_id = c.business_id), 0) AS outstanding_balance,
+        (SELECT MAX(created_at) FROM orders WHERE customer_id = c.id AND business_id = c.business_id) AS last_order_date,
+        (SELECT MAX(date)::text FROM payments WHERE customer_id = c.id AND business_id = c.business_id) AS last_payment_date
       FROM customers c
-      LEFT JOIN orders o ON o.customer_id = c.id AND o.business_id = c.business_id
-      LEFT JOIN invoices i ON i.customer_id = c.id AND i.business_id = c.business_id
-      LEFT JOIN payments p ON p.customer_id = c.id AND p.business_id = c.business_id
       WHERE c.business_id = $1
     `;
     const params: any[] = [businessId];
@@ -44,7 +47,8 @@ export class CustomerRepository {
       sql += ` AND (c.name ILIKE $${params.length} OR c.phone ILIKE $${params.length})`;
     }
 
-    sql += ` GROUP BY c.id ORDER BY c.name ASC`;
+    params.push(limit, offset);
+    sql += ` ORDER BY c.name ASC, c.id ASC LIMIT $${params.length - 1} OFFSET $${params.length}`;
 
     const res = await query(sql, params);
     return res.rows.map(r => ({
@@ -70,7 +74,7 @@ export class CustomerRepository {
         COALESCE((SELECT SUM(i.total) FROM invoices i WHERE i.customer_id = c.id AND i.business_id = c.business_id), 0) -
         COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.customer_id = c.id AND p.business_id = c.business_id), 0) AS outstanding_balance,
         (SELECT MAX(created_at) FROM orders WHERE customer_id = c.id AND business_id = c.business_id) AS last_order_date,
-        (SELECT MAX(created_at) FROM payments WHERE customer_id = c.id AND business_id = c.business_id) AS last_payment_date
+        (SELECT MAX(date)::text FROM payments WHERE customer_id = c.id AND business_id = c.business_id) AS last_payment_date
       FROM customers c
       WHERE c.id = $1 AND c.business_id = $2
     `;
@@ -106,11 +110,12 @@ export class CustomerRepository {
     phone: string;
     creditTermsDays?: number;
   }): Promise<Customer> {
+    const creditTermsDays = data.creditTermsDays ?? (await BusinessRepository.findById(data.businessId))?.settings.billing.defaultCreditTermsDays ?? 7;
     const res = await query<Customer>(
       `INSERT INTO customers (business_id, name, phone, credit_terms_days)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [data.businessId, data.name, data.phone, data.creditTermsDays ?? 7]
+      [data.businessId, data.name, data.phone, creditTermsDays]
     );
     return res.rows[0];
   }
@@ -122,15 +127,17 @@ export class CustomerRepository {
   }: {
     customerId: string;
     businessId: string;
-    data: Partial<Pick<Customer, 'name' | 'phone' | 'credit_terms_days' | 'active'>>;
+    data: { name?: string; phone?: string; creditTermsDays?: number; active?: boolean };
   }): Promise<Customer | null> {
     const fields: string[] = [];
     const values: any[] = [];
     let idx = 1;
 
-    for (const [key, val] of Object.entries(data)) {
+    const columns = { name: 'name', phone: 'phone', creditTermsDays: 'credit_terms_days', active: 'active' } as const;
+    for (const key of Object.keys(columns) as (keyof typeof columns)[]) {
+      const val = data[key];
       if (val !== undefined) {
-        fields.push(`${key} = $${idx++}`);
+        fields.push(`${columns[key]} = $${idx++}`);
         values.push(val);
       }
     }
@@ -155,7 +162,7 @@ export class CustomerRepository {
     businessId: string;
   }): Promise<boolean> {
     const res = await query(
-      'DELETE FROM customers WHERE id = $1 AND business_id = $2 RETURNING id',
+      'UPDATE customers SET active = FALSE, updated_at = NOW() WHERE id = $1 AND business_id = $2 RETURNING id',
       [customerId, businessId]
     );
     return (res.rowCount ?? 0) > 0;

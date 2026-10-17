@@ -1,11 +1,28 @@
 import { Router } from 'express';
-import { authenticate } from '../middleware/auth.middleware.js';
+import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
 import { ReportsService } from '../services/reports.service.js';
 import { PdfService } from '../services/pdf.service.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { dateOnlySchema } from '../validators/schemas.js';
+import { getPagination, validateUuidParam } from '../middleware/validate.middleware.js';
+import { BusinessRepository } from '../repositories/business.repo.js';
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireRoles('OWNER', 'STAFF'));
+router.param('customerId', validateUuidParam);
+router.use(async (req, res, next) => {
+  try {
+    for (const key of ['startDate', 'endDate', 'asOfDate']) {
+      if (req.query[key] !== undefined && !dateOnlySchema.safeParse(req.query[key]).success) throw new AppError(`${key} must be a valid YYYY-MM-DD date.`, 400);
+    }
+    if (req.query.startDate && req.query.endDate && String(req.query.startDate) > String(req.query.endDate)) throw new AppError('Start date must be on or before end date.', 400);
+    if (req.query.interval && !['day', 'week', 'month'].includes(String(req.query.interval))) throw new AppError('Report interval must be day, week or month.', 400);
+    if (req.query.limit !== undefined) getPagination(req.query);
+    const business = await BusinessRepository.findById(req.businessId!);
+    if (!business?.settings.modules.reports) throw new AppError('Reports are disabled in business settings.', 403);
+    next();
+  } catch (error) { next(error); }
+});
 
 /**
  * 1. GET /api/reports/statement/:customerId
@@ -36,7 +53,7 @@ router.get('/statement/:customerId', async (req, res, next) => {
 
 /**
  * 2. GET /api/reports/statement/:customerId/pdf
- * Export customer ledger statement as professional PDF using Puppeteer
+ * Export the customer ledger statement as a PDF.
  */
 router.get('/statement/:customerId/pdf', async (req, res, next) => {
   try {

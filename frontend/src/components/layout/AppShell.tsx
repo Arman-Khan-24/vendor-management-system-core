@@ -1,174 +1,72 @@
-import React from 'react';
-import {
-  LayoutDashboard,
-  ShoppingCart,
-  Users,
-  Package,
-  Receipt,
-  CreditCard,
-  BarChart3,
-  Settings,
-  LogOut,
-  Plus
-} from 'lucide-react';
+import { useState } from 'react';
+import type { ReactNode } from 'react';
+import { ArrowUpRight, BarChart3, BookOpen, ChevronDown, CircleHelp, CreditCard, LayoutDashboard, LogOut, MoreHorizontal, Package, Plus, ReceiptText, Settings2, ShoppingBag, Users } from 'lucide-react';
+import { Button, Modal } from '../ui';
+import { useBusiness } from '../../features/settings/businessSettings';
 
 interface AppShellProps {
   currentTab: string;
   onSelectTab: (tab: string) => void;
   onOpenNewOrder: () => void;
-  businessName?: string;
   userName?: string;
+  userRole?: string;
   onLogout: () => void;
-  children: React.ReactNode;
+  children: ReactNode;
 }
-
-export function AppShell({
-  currentTab,
-  onSelectTab,
-  onOpenNewOrder,
-  businessName = 'My Business',
-  userName = 'Vendor',
-  onLogout,
-  children
-}: AppShellProps) {
-  const navItems = [
-    { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
-    { id: 'orders', label: 'Orders', icon: ShoppingCart },
-    { id: 'customers', label: 'Customers', icon: Users },
-    { id: 'products', label: 'Catalog', icon: Package },
-    { id: 'payments', label: 'Payments', icon: CreditCard },
-    { id: 'invoices', label: 'Invoices', icon: Receipt },
-    { id: 'reports', label: 'Reports', icon: BarChart3 },
-    { id: 'settings', label: 'Settings', icon: Settings },
+export function AppShell({ currentTab, onSelectTab, onOpenNewOrder, userName = 'Owner', userRole = 'OWNER', onLogout, children }: AppShellProps) {
+  const { business, settings } = useBusiness();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const nav = [
+    { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
+    { id: 'orders', label: 'Orders', icon: ShoppingBag },
+    { id: 'products', label: settings.catalog.productLabel === 'Products' ? 'Catalog' : settings.catalog.productLabel, icon: Package },
+    { id: 'customers', label: settings.catalog.customerLabel, icon: Users },
+    { id: 'invoices', label: 'Invoices', icon: ReceiptText },
+    ...(settings.modules.payments ? [{ id: 'payments', label: 'Payments', icon: CreditCard }] : []),
+    ...(settings.modules.reports ? [{ id: 'reports', label: 'Reports', icon: BarChart3 }] : []),
+    { id: 'settings', label: 'Settings', icon: Settings2 },
   ];
-
-  return (
-    <div className="min-h-screen bg-[#F8FAFC] flex flex-col md:flex-row pb-20 md:pb-0">
-      {/* Desktop Sidebar Rail */}
-      <aside className="hidden md:flex flex-col w-64 border-r border-slate-200/80 bg-white min-h-screen p-5 select-none sticky top-0 h-screen">
-        {/* Brand Header */}
-        <div className="flex items-center gap-3 px-3 py-3 mb-6">
-          <div className="w-10 h-10 rounded-2xl bg-brand-500 flex items-center justify-center text-white shadow-md shadow-brand-500/20 font-extrabold text-lg tracking-wider">
-            OL
-          </div>
-          <div className="overflow-hidden">
-            <h1 className="font-bold text-slate-900 text-base leading-tight truncate">OrderLedger</h1>
-            <p className="text-xs text-slate-400 font-medium truncate">{businessName}</p>
-          </div>
-        </div>
-
-        {/* Primary Action Button */}
-        <button
-          onClick={onOpenNewOrder}
-          className="w-full mb-6 flex items-center justify-center gap-2 py-3 px-4 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-semibold text-sm shadow-md shadow-brand-500/20 active:scale-[0.98] transition-all"
-        >
-          <Plus className="w-4 h-4 stroke-[2.5]" />
-          <span>New Order</span>
-        </button>
-
-        {/* Navigation Links */}
-        <nav className="flex-1 space-y-1.5 overflow-y-auto">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const active = currentTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => onSelectTab(item.id)}
-                className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-sm font-semibold transition-all ${
-                  active
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100/80'
-                }`}
-              >
-                <Icon className={`w-5 h-5 ${active ? 'text-brand-400' : 'text-slate-400'}`} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* User Footer Profile */}
-        <div className="pt-4 mt-auto border-t border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 font-bold text-xs">
-              {userName.slice(0, 2).toUpperCase()}
-            </div>
-            <div className="truncate">
-              <p className="text-xs font-bold text-slate-800 truncate">{userName}</p>
-              <p className="text-[10px] text-slate-400">Authenticated</p>
-            </div>
-          </div>
-          <button
-            onClick={onLogout}
-            title="Sign out"
-            className="p-2 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-rose-50 transition-colors"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-        </div>
-      </aside>
-
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto max-h-screen">
-        {/* Mobile Header */}
-        <header className="md:hidden flex items-center justify-between px-5 py-4 bg-white border-b border-slate-200/60 sticky top-0 z-30">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-brand-500 flex items-center justify-center text-white font-bold text-xs shadow-sm">
-              OL
-            </div>
-            <div>
-              <h2 className="font-bold text-slate-900 text-sm leading-tight">{businessName}</h2>
-              <p className="text-[10px] text-slate-400">OrderLedger</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onOpenNewOrder}
-              className="w-8 h-8 rounded-xl bg-brand-500 flex items-center justify-center text-white shadow-sm active:scale-95"
-            >
-              <Plus className="w-4 h-4 stroke-[2.5]" />
-            </button>
-            <button
-              onClick={onLogout}
-              className="p-1.5 text-slate-400 hover:text-rose-500"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        </header>
-
-        {/* Dynamic View Body */}
-        <div className="p-4 sm:p-6 md:p-8 max-w-7xl w-full mx-auto">
-          {children}
-        </div>
-      </main>
-
-      {/* Mobile Bottom Navigation Bar (Cashew-Style Thumb-Friendly) */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-slate-200/80 px-2 py-2 flex justify-around items-center z-40 shadow-lg">
-        {[
-          { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
-          { id: 'orders', label: 'Orders', icon: ShoppingCart },
-          { id: 'customers', label: 'Clients', icon: Users },
-          { id: 'payments', label: 'Payments', icon: CreditCard },
-          { id: 'settings', label: 'More', icon: Settings },
-        ].map((item) => {
-          const Icon = item.icon;
-          const active = currentTab === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => onSelectTab(item.id)}
-              className={`flex flex-col items-center justify-center w-14 py-1 rounded-2xl transition-all ${
-                active ? 'text-brand-600 font-bold scale-105' : 'text-slate-400 hover:text-slate-600 font-medium'
-              }`}
-            >
-              <Icon className={`w-5 h-5 ${active ? 'stroke-[2.5]' : 'stroke-2'}`} />
-              <span className="text-[10px] mt-0.5 tracking-tight">{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-    </div>
+  const select = (id: string) => { setMoreOpen(false); onSelectTab(id); };
+  const logo = <div className="brand-symbol">{business?.logo_url ? <img src={business.logo_url} alt="" referrerPolicy="no-referrer" onError={e => { e.currentTarget.style.display = 'none'; }} /> : <BookOpen size={24} strokeWidth={1.8} aria-hidden="true" />}</div>;
+  const navButtons = (mobile = false) => nav.map(({ id, label, icon: Icon }) =>
+    <button key={id} type="button" className={'nav-item ' + (currentTab === id ? 'selected' : '')} aria-current={currentTab === id ? 'page' : undefined} onClick={() => select(id)}>
+      <Icon size={20} aria-hidden="true" /><span>{label}</span>{mobile && <ArrowUpRight size={16} className="nav-arrow" aria-hidden="true" />}
+    </button>
   );
+  return <div className="app-shell">
+    <a href="#main-content" className="skip-link">Skip to content</a>
+    <aside className="sidebar">
+      <button className="brand" type="button" onClick={() => select('dashboard')}>{logo}<span>{settings.branding.appName}<small>YOUR BUSINESS, TOGETHER</small></span></button>
+      <div className="workspace-label"><span className="status-dot" /><span>{business?.name}</span></div>
+      <p className="nav-caption">WORKSPACE</p>
+      <nav aria-label="Main navigation">{navButtons()}</nav>
+      <div className="sidebar-bottom">
+        {userRole === 'OWNER' && <button className="customize-card" onClick={() => select('settings')}><Settings2 size={21} aria-hidden="true" /><strong>Make it yours</strong><p>A setup that fits your business.</p><span>Customize workspace <ArrowUpRight size={15} aria-hidden="true" /></span></button>}
+        <div className="profile-row"><div className="avatar">{userName.slice(0, 1).toUpperCase()}</div><div className="profile-name"><strong>{userName}</strong><small>{userRole === 'OWNER' ? 'Business owner' : userRole === 'DELIVERY' ? 'Delivery team' : 'Team member'}</small></div><Button variant="ghost" className="icon-button" aria-label="Sign out" onClick={onLogout}><LogOut size={18} /></Button></div>
+      </div>
+    </aside>
+    <div className="workspace-content">
+      <header className="topbar">
+        <div className="desktop-breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{nav.find(n => n.id === currentTab)?.label}</strong></div>
+        <button className="mobile-brand" type="button" onClick={() => setMoreOpen(true)}>{logo}<span>{business?.name}</span><ChevronDown size={16} aria-hidden="true" /></button>
+        <div className="topbar-actions"><Button variant="ghost" className="icon-button" aria-label="Workspace help" onClick={() => setHelpOpen(true)}><CircleHelp size={20} /></Button><Button size="sm" onClick={onOpenNewOrder}><Plus size={18} aria-hidden="true" />New order</Button></div>
+      </header>
+      <main id="main-content" className="main-content" tabIndex={-1}>{children}</main>
+      <footer className="workspace-footer"><span>{settings.branding.tagline}</span><span>{business?.currency || 'INR'} · {settings.branding.appName}</span></footer>
+    </div>
+    <nav className="bottom-nav" aria-label="Mobile navigation">
+      {nav.slice(0, 4).map(({ id, label, icon: Icon }) => <button key={id} type="button" aria-current={id === currentTab ? 'page' : undefined} className={id === currentTab ? 'selected' : ''} onClick={() => select(id)}><span><Icon size={21} aria-hidden="true" /></span><small>{id === 'dashboard' ? 'Home' : label}</small></button>)}
+      <button type="button" aria-expanded={moreOpen} className={nav.slice(4).some(n => n.id === currentTab) ? 'selected' : ''} onClick={() => setMoreOpen(true)}><span><MoreHorizontal size={23} aria-hidden="true" /></span><small>More</small></button>
+    </nav>
+    <Modal isOpen={moreOpen} title="Your workspace" onClose={() => setMoreOpen(false)}>
+      <nav className="mobile-menu" aria-label="All pages">{navButtons(true)}</nav>
+      <div className="profile-row"><div><strong>{userName}</strong><p className="muted">{business?.name}</p></div><Button variant="outline" onClick={onLogout}><LogOut size={16} aria-hidden="true" />Sign out</Button></div>
+    </Modal>
+    <Modal isOpen={helpOpen} title="A simple daily routine" onClose={() => setHelpOpen(false)}>
+      <ol className="help-steps"><li>Add your products and prices in Catalog.</li><li>Add customers and their payment terms.</li><li>Create an order, then mark it packed and delivered.</li><li>An invoice is created at your chosen billing stage.</li><li>Record money received. Open a customer statement to see the balance.</li></ol>
+      <p className="muted">Business owners can change branding, catalog defaults and billing in Settings. WhatsApp ordering will be available after its integration.</p>
+      <div className="form-actions"><Button onClick={() => setHelpOpen(false)}>Got it</Button></div>
+    </Modal>
+  </div>;
 }

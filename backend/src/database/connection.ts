@@ -34,3 +34,20 @@ export async function query<T extends pg.QueryResultRow = any>(text: string, par
 export async function getClient() {
   return await pool.connect();
 }
+
+/** Join an existing unit of work or own its complete commit/rollback lifecycle. */
+export async function withTransaction<T>(work: (client: pg.PoolClient) => Promise<T>, existingClient?: pg.PoolClient): Promise<T> {
+  if (existingClient) return work(existingClient);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await work(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}

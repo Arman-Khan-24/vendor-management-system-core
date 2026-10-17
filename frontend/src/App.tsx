@@ -1,344 +1,193 @@
-import React, { useState, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { CheckCircle2, Link2, RefreshCw, X } from 'lucide-react';
+import { ApiClient, ApiError } from './api/client';
 import { AppShell } from './components/layout/AppShell';
-import { DashboardView } from './features/dashboard/DashboardView';
-import { OrdersView } from './features/orders/OrdersView';
-import { OrderDetailModal } from './features/orders/OrderDetailModal';
-import { NewOrderModal } from './features/orders/NewOrderModal';
+import { Button, EmptyState, ErrorNotice, LoadingState, Modal } from './components/ui';
+import { AuthView } from './features/auth/AuthView';
 import { CustomersView } from './features/customers/CustomersView';
 import { StatementModal } from './features/customers/StatementModal';
+import { DashboardView } from './features/dashboard/DashboardView';
+import { InvoicesView, InvoiceModal } from './features/invoices/InvoicesView';
+import { NewOrderModal } from './features/orders/NewOrderModal';
+import { OrderDetailModal } from './features/orders/OrderDetailModal';
+import { OrdersView } from './features/orders/OrdersView';
+import { PaymentsView, RecordPaymentModal } from './features/payments/PaymentsView';
 import { ProductsView } from './features/products/ProductsView';
-import { PaymentsView } from './features/payments/PaymentsView';
 import { ReportsView } from './features/reports/ReportsView';
-import { AuthView } from './features/auth/AuthView';
-import { ApiClient } from './api/client';
-import { Order, Customer, Product, Payment, DashboardSummary, OrderStatus } from './types';
+import { BusinessProvider, getSettings } from './features/settings/businessSettings';
+import { ServerConnection } from './features/settings/ConnectionSettings';
+import { SettingsView } from './features/settings/SettingsView';
+import type { Business, BusinessUpdate, Customer, CustomerInput, DashboardSummary, Invoice, Order, OrderInput, OrderStatus, Payment, PaymentInput, Product, ProductInput, User } from './types';
+import { errorMessage } from './utils/formatters';
 
 export function App() {
-  const [currentUser, setCurrentUser] = useState<any>(null);
-  const [currentBusiness, setCurrentBusiness] = useState<any>(null);
-  const [loadingAuth, setLoadingAuth] = useState(true);
-
-  // Navigation tab
-  const [currentTab, setCurrentTab] = useState<string>('dashboard');
-
-  // Application Data
-  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [business, setBusiness] = useState<Business | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [connectionOpen, setConnectionOpen] = useState(false);
+  const [tab, setTab] = useState('dashboard');
+  const [settingsSection, setSettingsSection] = useState('business');
+  const [settingsDirty, setSettingsDirty] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [loadingData, setLoadingData] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [newOrder, setNewOrder] = useState(false);
+  const [paymentFor, setPaymentFor] = useState<string | null>(null);
+  const [order, setOrder] = useState<Order | null>(null);
+  const [orderLoading, setOrderLoading] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const [invoiceId, setInvoiceId] = useState<string | null>(null);
+  const [invoice, setInvoice] = useState<Invoice | null>(null);
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
+  const [statementId, setStatementId] = useState<string | null>(null);
+  const [statement, setStatement] = useState<any>(null);
+  const [statementLoading, setStatementLoading] = useState(false);
+  const [statementError, setStatementError] = useState<string | null>(null);
+  const session = useRef(0);
+  const load = useRef(0);
+  const detail = useRef(0);
+  const settings = getSettings(business);
 
-  // Modals
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-  const [showNewOrderModal, setShowNewOrderModal] = useState(false);
-  const [showRecordPaymentModal, setShowRecordPaymentModal] = useState(false);
-  const [selectedStatement, setSelectedStatement] = useState<any | null>(null);
-
-  // Check initial login state
-  useEffect(() => {
-    async function checkAuth() {
-      try {
-        const data = await ApiClient.getMe();
-        setCurrentUser(data.user);
-        setCurrentBusiness(data.business);
-      } catch (e) {
-        ApiClient.clearToken();
-      } finally {
-        setLoadingAuth(false);
-      }
-    }
-    checkAuth();
-  }, []);
-
-  // Fetch tenant operational data
-  const refreshData = async () => {
-    if (!currentUser) return;
-    try {
-      const [sum, ords, custs, prods, pays] = await Promise.all([
-        ApiClient.getDashboard().catch(() => null),
-        ApiClient.getOrders().catch(() => []),
-        ApiClient.getCustomers().catch(() => []),
-        ApiClient.getProducts().catch(() => []),
-        ApiClient.getPayments().catch(() => [])
-      ]);
-      if (sum) setDashboardSummary(sum);
-      setOrders(ords);
-      setCustomers(custs);
-      setProducts(prods);
-      setPayments(pays);
-    } catch (err) {
-      console.error('Failed to load tenant data:', err);
-    }
-  };
-
-  useEffect(() => {
-    if (currentUser) {
-      refreshData();
-    }
-  }, [currentUser]);
-
-  // Order state update handler
-  const handleUpdateOrderStatus = async (orderId: string, nextStatus: OrderStatus) => {
-    try {
-      const updated = await ApiClient.updateOrderStatus(orderId, nextStatus);
-      setOrders(orders.map(o => (o.id === orderId ? updated : o)));
-      if (selectedOrder && selectedOrder.id === orderId) {
-        setSelectedOrder(updated);
-      }
-      refreshData();
-    } catch (err: any) {
-      alert(`Status update failed: ${err.message}`);
-    }
-  };
-
-  // Create order handler
-  const handleCreateOrder = async (data: { customerId: string; notes?: string; items: any[] }) => {
-    try {
-      await ApiClient.createOrder(data);
-      refreshData();
-    } catch (err: any) {
-      alert(`Order creation failed: ${err.message}`);
-    }
-  };
-
-  // Customer statement viewer
-  const handleViewStatement = async (customer: Customer) => {
-    try {
-      const statement = await ApiClient.getCustomerStatement(customer.id);
-      setSelectedStatement(statement);
-    } catch (err: any) {
-      alert(`Failed to load statement: ${err.message}`);
-    }
-  };
-
-  // Record payment handler
-  const handleRecordPayment = async (data: any) => {
-    try {
-      await ApiClient.recordPayment(data);
-      refreshData();
-    } catch (err: any) {
-      alert(`Payment recording failed: ${err.message}`);
-    }
-  };
-
-  // Create customer
-  const handleCreateCustomer = async (data: any) => {
-    try {
-      await ApiClient.createCustomer(data);
-      refreshData();
-    } catch (err: any) {
-      alert(`Failed to create customer: ${err.message}`);
-    }
-  };
-
-  // Create product
-  const handleCreateProduct = async (data: any) => {
-    try {
-      await ApiClient.createProduct(data);
-      refreshData();
-    } catch (err: any) {
-      alert(`Failed to create product: ${err.message}`);
-    }
-  };
-
-  // Logout
-  const handleLogout = () => {
+  const logout = useCallback(() => {
+    session.current++; load.current++; detail.current++;
     ApiClient.clearToken();
-    setCurrentUser(null);
-    setCurrentBusiness(null);
+    setUser(null); setBusiness(null); setAuthError(null); setAuthLoading(false);
+    setOrders([]); setCustomers([]); setProducts([]); setPayments([]); setInvoices([]); setSummary(null);
+    setNewOrder(false); setPaymentFor(null); setOrder(null); setInvoiceId(null); setInvoice(null); setStatementId(null); setStatement(null);
+    setSettingsDirty(false); setPendingNavigation(null); setDataError(null); setLoadingData(false); setTab('dashboard'); setToast(null);
+  }, []);
+  const checkAuth = useCallback(async () => {
+    const version = ++session.current;
+    setAuthError(null);
+    if (!ApiClient.hasToken()) { setAuthLoading(false); return; }
+    setAuthLoading(true);
+    try {
+      const result = await ApiClient.getMe();
+      if (session.current === version) { setUser(result.user); setBusiness(result.business); }
+    } catch (e) {
+      if (session.current !== version) return;
+      if (e instanceof ApiError && e.status === 401) ApiClient.clearToken();
+      else setAuthError(errorMessage(e));
+    } finally { if (session.current === version) setAuthLoading(false); }
+  }, []);
+  useEffect(() => {
+    void checkAuth();
+    window.addEventListener('orderledger:connection', logout);
+    window.addEventListener('orderledger:unauthorized', logout);
+    return () => {
+      session.current++;
+      window.removeEventListener('orderledger:connection', logout);
+      window.removeEventListener('orderledger:unauthorized', logout);
+    };
+  }, [checkAuth, logout]);
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+  const refresh = useCallback(async () => {
+    if (!user) return;
+    const version = ++load.current;
+    setLoadingData(true);
+    const results = await Promise.allSettled([ApiClient.getDashboard(), ApiClient.getOrders(), ApiClient.getCustomers(), ApiClient.getProducts(), ApiClient.getPayments(), ApiClient.getInvoices()]);
+    if (load.current !== version) return;
+    const [dash, ord, cust, prod, pay, inv] = results;
+    if (dash.status === 'fulfilled') setSummary(dash.value);
+    if (ord.status === 'fulfilled') setOrders(ord.value);
+    if (cust.status === 'fulfilled') setCustomers(cust.value);
+    if (prod.status === 'fulfilled') setProducts(prod.value);
+    if (pay.status === 'fulfilled') setPayments(pay.value);
+    if (inv.status === 'fulfilled') setInvoices(inv.value);
+    const labels = ['overview', 'orders', 'customers', 'catalog', 'payments', 'invoices'];
+    const failed = results.flatMap((r, i) => r.status === 'rejected' ? [labels[i] + ': ' + errorMessage(r.reason)] : []);
+    setDataError(failed.length ? 'Could not refresh ' + failed.join(' · ') : null);
+    setLoadingData(false);
+  }, [user]);
+  useEffect(() => { if (user) void refresh(); }, [user, refresh]);
+  useEffect(() => {
+    if ((tab === 'payments' && !settings.modules.payments) || (tab === 'reports' && !settings.modules.reports)) setTab('dashboard');
+  }, [settings.modules.payments, settings.modules.reports, tab]);
+
+  const navigate = (next: string) => {
+    if (settingsDirty && next !== 'settings') { setPendingNavigation(next); return; }
+    setTab(next);
+    if (next !== 'settings') setSettingsSection('business');
+    window.scrollTo(0, 0);
   };
-
-  if (loadingAuth) {
-    return (
-      <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-brand-500 border-t-transparent rounded-full animate-spin" />
+  const requestLogout = () => { if (settingsDirty) setPendingNavigation('logout'); else logout(); };
+  const saveMutation = async (action: () => Promise<unknown>, message: string) => {
+    await action();
+    setToast(message);
+    void refresh();
+  };
+  const openOrder = async (selected: Order) => {
+    const version = ++detail.current;
+    setOrder(selected); setInvoiceId(null); setStatementId(null); setOrderError(null); setOrderLoading(true);
+    try { const complete = await ApiClient.getOrder(selected.id); if (detail.current === version) setOrder(complete); }
+    catch (e) { if (detail.current === version) setOrderError(errorMessage(e)); }
+    finally { if (detail.current === version) setOrderLoading(false); }
+  };
+  const updateOrder = async (id: string, status: OrderStatus) => {
+    const updated = await ApiClient.updateOrderStatus(id, status);
+    setOrder(updated); setToast('Order marked ' + status.toLowerCase() + '.');
+    void refresh();
+  };
+  const openInvoice = async (id: string) => {
+    const version = ++detail.current;
+    setOrder(null); setStatementId(null); setInvoice(null); setInvoiceId(id); setInvoiceError(null);
+    try { const complete = await ApiClient.getInvoice(id); if (detail.current === version) setInvoice(complete); }
+    catch (e) { if (detail.current === version) setInvoiceError(errorMessage(e)); }
+  };
+  const openStatement = async (id: string) => {
+    const version = ++detail.current;
+    setOrder(null); setInvoiceId(null); setStatement(null); setStatementId(id); setStatementError(null); setStatementLoading(true);
+    try { const complete = await ApiClient.getCustomerStatement(id); if (detail.current === version) setStatement(complete); }
+    catch (e) { if (detail.current === version) setStatementError(errorMessage(e)); }
+    finally { if (detail.current === version) setStatementLoading(false); }
+  };
+  const openPayment = (customerId = '') => { detail.current++; setInvoiceId(null); setStatementId(null); setOrder(null); setPaymentFor(customerId); };
+  const saveSettings = async (data: BusinessUpdate) => {
+    const updated = await ApiClient.updateBusiness(data);
+    setBusiness(updated); setToast('Business settings saved.'); setSettingsDirty(false);
+    void refresh();
+  };
+  if (authLoading) return <BusinessProvider business={null}><LoadingState label="Opening your workspace…" /></BusinessProvider>;
+  if (!user || !business) return <BusinessProvider business={null}>
+    {authError ? <div className="auth-content" style={{ minHeight: '100dvh' }}><div className="auth-form stack"><h2>Let’s reconnect.</h2><ErrorNotice message={authError} /><Button onClick={() => void checkAuth()}><RefreshCw size={18} aria-hidden="true" />Try again</Button><Button variant="outline" onClick={() => setConnectionOpen(true)}><Link2 size={18} aria-hidden="true" />Check server connection</Button><Button variant="ghost" onClick={logout}>Back to sign in</Button></div></div> :
+      <AuthView onSuccess={(account, tenant) => { session.current++; setUser(account); setBusiness(tenant); setTab('dashboard'); }} />}
+    <Modal isOpen={connectionOpen} onClose={() => setConnectionOpen(false)} title="Server connection"><ServerConnection /></Modal>
+  </BusinessProvider>;
+  return <BusinessProvider business={business}>
+    <AppShell currentTab={tab} onSelectTab={navigate} onOpenNewOrder={() => setNewOrder(true)} userName={user.name} userRole={user.role} onLogout={requestLogout}>
+      <div className="stack">
+        {dataError && <ErrorNotice message={dataError} retry={() => void refresh()} />}
+        {loadingData && !summary && tab !== 'settings' ? <LoadingState /> : <>
+          {tab === 'dashboard' && (summary ? <DashboardView summary={summary} customers={customers} products={products} orders={orders} userName={user.name} onNavigateTab={navigate} onOpenNewOrder={() => setNewOrder(true)} onOpenRecordPayment={() => openPayment()} onSelectOrder={openOrder} onStatement={openStatement} /> : <EmptyState title="Your overview could not load" description="Try refreshing once the server is available." action={<Button onClick={() => void refresh()}>Refresh overview</Button>} />)}
+          {tab === 'products' && <ProductsView products={products} onCreateProduct={(data: ProductInput) => saveMutation(() => ApiClient.createProduct(data), 'Product added.')} onUpdateProduct={(id, data) => saveMutation(() => ApiClient.updateProduct(id, data), data.active === false ? 'Product archived.' : data.active === true ? 'Product restored.' : 'Product updated.')} onCustomize={() => { setSettingsSection('catalog'); navigate('settings'); }} />}
+          {tab === 'customers' && <CustomersView customers={customers} onSelectCustomer={c => void openStatement(c.id)} onCreateCustomer={(data: CustomerInput) => saveMutation(() => ApiClient.createCustomer(data), 'Customer added.')} onUpdateCustomer={(id, data) => saveMutation(() => ApiClient.updateCustomer(id, data), data.active === false ? 'Customer archived.' : data.active === true ? 'Customer restored.' : 'Customer updated.')} onRecordPayment={openPayment} />}
+          {tab === 'orders' && <OrdersView orders={orders} onSelectOrder={openOrder} onOpenNewOrder={() => setNewOrder(true)} />}
+          {tab === 'invoices' && <InvoicesView invoices={invoices} onSelect={i => void openInvoice(i.id)} />}
+          {tab === 'payments' && settings.modules.payments && <PaymentsView payments={payments} onOpenRecord={() => openPayment()} onStatement={openStatement} />}
+          {tab === 'reports' && settings.modules.reports && <ReportsView onOpenStatement={openStatement} />}
+          {tab === 'settings' && <SettingsView business={business} user={user} onSave={saveSettings} onDirtyChange={setSettingsDirty} initialSection={settingsSection} />}
+        </>}
       </div>
-    );
-  }
-
-  if (!currentUser) {
-    return (
-      <AuthView
-        onSuccess={(user, business) => {
-          setCurrentUser(user);
-          setCurrentBusiness(business);
-        }}
-      />
-    );
-  }
-
-  return (
-    <AppShell
-      currentTab={currentTab}
-      onSelectTab={setCurrentTab}
-      onOpenNewOrder={() => setShowNewOrderModal(true)}
-      businessName={currentBusiness?.name}
-      userName={currentUser?.name}
-      onLogout={handleLogout}
-    >
-      {currentTab === 'dashboard' && (
-        <DashboardView
-          summary={dashboardSummary}
-          onNavigateTab={setCurrentTab}
-          onOpenNewOrder={() => setShowNewOrderModal(true)}
-          onOpenRecordPayment={() => setShowRecordPaymentModal(true)}
-        />
-      )}
-
-      {currentTab === 'orders' && (
-        <OrdersView
-          orders={orders}
-          onSelectOrder={async (ord) => {
-            try {
-              const fullOrder = await ApiClient.getOrder(ord.id);
-              setSelectedOrder(fullOrder);
-            } catch {
-              setSelectedOrder(ord);
-            }
-          }}
-          onUpdateStatus={handleUpdateOrderStatus}
-          onOpenNewOrder={() => setShowNewOrderModal(true)}
-        />
-      )}
-
-
-      {currentTab === 'customers' && (
-        <CustomersView
-          customers={customers}
-          onSelectCustomer={handleViewStatement}
-          onCreateCustomer={handleCreateCustomer}
-        />
-      )}
-
-      {currentTab === 'products' && (
-        <ProductsView
-          products={products}
-          onCreateProduct={handleCreateProduct}
-        />
-      )}
-
-      {currentTab === 'payments' && (
-        <PaymentsView
-          payments={payments}
-          customers={customers}
-          onRecordPayment={handleRecordPayment}
-          showRecordModal={showRecordPaymentModal}
-          setShowRecordModal={setShowRecordPaymentModal}
-        />
-      )}
-
-      {currentTab === 'invoices' && (
-        <div className="space-y-4">
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Invoices</h2>
-          <p className="text-xs text-slate-500">
-            Tenant-scoped sequential invoice repository with payment allocation reconciliation
-          </p>
-          <div className="border border-slate-100 bg-white rounded-3xl p-5 shadow-sm divide-y divide-slate-100">
-            {orders.filter(o => o.invoice_no).length === 0 ? (
-              <p className="text-xs text-slate-400 py-6 text-center">No invoices generated yet. Invoices are triggered on order fulfillment.</p>
-            ) : (
-              orders.filter(o => o.invoice_no).map(o => (
-                <div key={o.id} className="py-3.5 flex items-center justify-between text-xs">
-                  <div>
-                    <span className="font-bold text-slate-900 block">INV-{String(o.invoice_no).padStart(4, '0')}</span>
-                    <span className="text-slate-400 text-[11px]">{o.customer_name} · Order #{o.order_no}</span>
-                  </div>
-                  <div className="text-right">
-                    <span className="font-black text-slate-900 block">{o.total_amount ? `₹${o.total_amount}` : '—'}</span>
-                    <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                      {o.invoice_status || 'Pending'}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
-      {currentTab === 'reports' && (
-        <ReportsView
-          onOpenStatement={async (customerId) => {
-            try {
-              const statement = await ApiClient.getCustomerStatement(customerId);
-              setSelectedStatement(statement);
-            } catch (err: any) {
-              alert(`Failed to load statement: ${err.message}`);
-            }
-          }}
-        />
-      )}
-
-      {currentTab === 'settings' && (
-        <div className="max-w-xl space-y-5">
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Business Settings</h2>
-          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4 text-xs">
-            <div>
-              <span className="font-bold text-slate-400 uppercase tracking-wider block text-[10px]">Business Name</span>
-              <span className="font-bold text-slate-900 text-sm mt-0.5 block">{currentBusiness?.name}</span>
-            </div>
-            <div>
-              <span className="font-bold text-slate-400 uppercase tracking-wider block text-[10px]">Tenant Slug (Scoping ID)</span>
-              <span className="font-mono text-slate-700 bg-slate-100 px-2 py-1 rounded-lg mt-0.5 inline-block">
-                {currentBusiness?.slug}
-              </span>
-            </div>
-            <div>
-              <span className="font-bold text-slate-400 uppercase tracking-wider block text-[10px]">Invoice Auto-Generation Trigger</span>
-              <span className="font-semibold text-slate-700 mt-0.5 block">
-                Triggered on status: <strong className="text-brand-600">{currentBusiness?.invoice_trigger || 'Delivered'}</strong>
-              </span>
-            </div>
-            <div>
-              <span className="font-bold text-slate-400 uppercase tracking-wider block text-[10px]">WhatsApp Text AI Ingestion Status</span>
-              <div className="mt-1 p-3 bg-emerald-50/50 rounded-2xl border border-emerald-100 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-emerald-800 text-xs block">Active & Listening</span>
-                  <span className="text-[11px] text-emerald-600 font-mono">
-                    /webhooks/whatsapp/{currentBusiness?.id}
-                  </span>
-                </div>
-                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
-                  Gemini + Groq Fallback
-                </span>
-              </div>
-            </div>
-            <div>
-              <span className="font-bold text-slate-400 uppercase tracking-wider block text-[10px]">Authenticated User Role</span>
-              <span className="font-semibold text-slate-700 mt-0.5 block">{currentUser?.role} ({currentUser?.email})</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modals */}
-      <OrderDetailModal
-        order={selectedOrder}
-        onClose={() => setSelectedOrder(null)}
-        onUpdateStatus={handleUpdateOrderStatus}
-      />
-
-      <NewOrderModal
-        isOpen={showNewOrderModal}
-        onClose={() => setShowNewOrderModal(false)}
-        customers={customers}
-        products={products}
-        onSubmit={handleCreateOrder}
-      />
-
-      <StatementModal
-        statementData={selectedStatement}
-        onClose={() => setSelectedStatement(null)}
-        onFilterChange={async (startDate, endDate) => {
-          if (!selectedStatement?.customer?.id) return;
-          const updated = await ApiClient.getCustomerStatement(selectedStatement.customer.id, {
-            startDate,
-            endDate
-          });
-          setSelectedStatement(updated);
-        }}
-      />
     </AppShell>
-  );
+    {newOrder && <NewOrderModal isOpen onClose={() => setNewOrder(false)} customers={customers} products={products} onSubmit={(data: OrderInput) => saveMutation(() => ApiClient.createOrder(data), 'Order created.')} onSetup={navigate} />}
+    {paymentFor !== null && <RecordPaymentModal customers={customers} initialCustomerId={paymentFor} onClose={() => setPaymentFor(null)} onSubmit={(data: PaymentInput) => saveMutation(() => ApiClient.recordPayment(data), 'Payment recorded.')} onSetup={() => { setPaymentFor(null); navigate('customers'); }} />}
+    {order && <OrderDetailModal order={order} loading={orderLoading} loadError={orderError} onClose={() => { detail.current++; setOrder(null); }} onUpdateStatus={updateOrder} onInvoice={openInvoice} />}
+    {invoiceId && (invoice ? <InvoiceModal invoice={invoice} onClose={() => { detail.current++; setInvoiceId(null); }} onPayment={openPayment} onStatement={openStatement} /> : <Modal isOpen title="Invoice" onClose={() => { detail.current++; setInvoiceId(null); }}>{invoiceError ? <ErrorNotice message={invoiceError} retry={() => void openInvoice(invoiceId)} /> : <LoadingState label="Loading invoice…" />}</Modal>)}
+    {statementId && <StatementModal key={statementId} statementData={statement} loading={statementLoading} loadError={statementError} onClose={() => { detail.current++; setStatementId(null); }} onFilterChange={async (startDate, endDate) => { const result = await ApiClient.getCustomerStatement(statementId, { startDate, endDate }); setStatement(result); }} />}
+    <Modal isOpen={pendingNavigation !== null} title="Unsaved settings" onClose={() => setPendingNavigation(null)}><div className="stack"><p>Your business settings have unsaved changes. Keep editing or leave and discard them.</p><div className="form-actions"><Button variant="secondary" onClick={() => setPendingNavigation(null)}>Keep editing</Button><Button variant="danger" onClick={() => { const next = pendingNavigation; setPendingNavigation(null); setSettingsDirty(false); if (next === 'logout') logout(); else if (next) setTab(next); }}>Discard & leave</Button></div></div></Modal>
+    {toast && <div className="toast" role="status"><CheckCircle2 size={19} aria-hidden="true" /><span>{toast}</span><button type="button" aria-label="Dismiss notification" onClick={() => setToast(null)}><X size={16} /></button></div>}
+  </BusinessProvider>;
 }
 export default App;

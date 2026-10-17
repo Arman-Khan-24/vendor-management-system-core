@@ -3,16 +3,18 @@ import { ReportsService } from './reports.service.js';
 
 export class DashboardService {
   static async getSummary(businessId: string) {
+    const today = new Date().toISOString().slice(0, 10);
     // 1. Today's sales and order counts
     const todaySql = `
       SELECT 
-        COUNT(DISTINCT o.id) AS today_orders_count,
-        COALESCE(SUM(oi.quantity * oi.unit_price_at_order), 0) AS today_sales
+        COUNT(o.id) AS today_orders_count,
+        COALESCE(SUM(lines.subtotal + ROUND(lines.subtotal * o.tax_rate / 100, 2)), 0) AS today_sales
       FROM orders o
-      LEFT JOIN order_items oi ON oi.order_id = o.id AND oi.business_id = o.business_id
-      WHERE o.business_id = $1 AND o.created_at::date = CURRENT_DATE
+      LEFT JOIN LATERAL (SELECT COALESCE(SUM(oi.total_price), 0) AS subtotal FROM order_items oi
+        WHERE oi.order_id = o.id AND oi.business_id = o.business_id) lines ON TRUE
+      WHERE o.business_id = $1 AND (o.created_at AT TIME ZONE 'UTC')::date = $2::date
     `;
-    const todayRes = await query(todaySql, [businessId]);
+    const todayRes = await query(todaySql, [businessId, today]);
 
     // 2. Order status breakdown
     const statusSql = `
@@ -34,18 +36,17 @@ export class DashboardService {
     // 3. Outstanding balance and collections
     const balanceSql = `
       SELECT 
-        COALESCE((SELECT SUM(total) FROM invoices WHERE business_id = $1), 0) AS total_billed,
         COALESCE((SELECT SUM(amount) FROM payments WHERE business_id = $1), 0) AS total_collected,
-        COALESCE((SELECT SUM(amount) FROM payments WHERE business_id = $1 AND created_at::date = CURRENT_DATE), 0) AS today_collected
+        COALESCE((SELECT SUM(amount) FROM payments WHERE business_id = $1 AND date = $2::date), 0) AS today_collected
     `;
-    const balanceRes = await query(balanceSql, [businessId]);
-    const totalBilled = parseFloat(balanceRes.rows[0].total_billed);
+    const balanceRes = await query(balanceSql, [businessId, today]);
     const totalCollected = parseFloat(balanceRes.rows[0].total_collected);
     const todayCollected = parseFloat(balanceRes.rows[0].today_collected);
-    const totalOutstanding = Math.max(0, totalBilled - totalCollected);
 
     // 4. Overdue report via ReportsService
     const duesReport = await ReportsService.getOutstandingReport({ businessId });
+    // One customer's credit must not cancel another customer's debt.
+    const totalOutstanding = duesReport.totalOutstanding;
 
     // 5. Recent 7-day Sales & Collections Trends
     const sevenDaysAgo = new Date();

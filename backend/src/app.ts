@@ -10,9 +10,8 @@ import invoiceRoutes from './routes/invoice.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import reportsRoutes from './routes/reports.routes.js';
-import webhookRoutes from './routes/webhook.routes.js';
-import whatsappRoutes from './routes/whatsapp.routes.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { checkDatabaseReadiness } from './database/migrator.js';
 
 export function createApp() {
   const app = express();
@@ -20,16 +19,17 @@ export function createApp() {
   // Basic security and parsing
   app.use(helmet());
   app.use(cors({ origin: true, credentials: true }));
-  app.use(express.json({ limit: '25mb' }));
-  app.use(express.urlencoded({ limit: '25mb', extended: true }));
+  app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ limit: '1mb', extended: true }));
 
   // Health check endpoint
-  app.get('/health', (req, res) => {
-    res.json({
-      status: 'ok',
-      service: 'OrderLedger Core API',
-      timestamp: new Date().toISOString()
-    });
+  app.get('/health', async (req, res) => {
+    try {
+      await checkDatabaseReadiness();
+      res.json({ status: 'ok', service: 'OrderLedger Core API', timestamp: new Date().toISOString() });
+    } catch {
+      res.status(503).json({ status: 'unavailable', service: 'OrderLedger Core API', error: 'Database connection or migrations are not ready.' });
+    }
   });
 
   // REST Routes
@@ -42,8 +42,12 @@ export function createApp() {
   app.use('/api/payments', paymentRoutes);
   app.use('/api/dashboard', dashboardRoutes);
   app.use('/api/reports', reportsRoutes);
-  app.use('/api/whatsapp', whatsappRoutes);
-  app.use('/webhooks/whatsapp', webhookRoutes);
+  // Integration is deferred. Never mount the unauthenticated mock history or ingestion routes.
+  app.use(['/api/whatsapp', '/webhooks/whatsapp'], (req, res) => {
+    res.status(503).json({ error: 'WhatsApp integration is not enabled.', code: 'INTEGRATION_UNAVAILABLE' });
+  });
+
+  app.use((req, res) => { res.status(404).json({ error: 'API route not found.' }); });
 
   // Central error handler
   app.use(errorHandler);

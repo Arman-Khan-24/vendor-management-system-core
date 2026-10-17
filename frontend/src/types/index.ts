@@ -10,7 +10,36 @@ export interface Business {
   phone: string | null;
   currency: string;
   invoice_trigger: 'Packed' | 'Delivered';
+  logo_url?: string | null;
+  settings?: BusinessSettings;
 }
+
+export type Accent = 'sage' | 'lavender' | 'peach' | 'sky';
+export type Theme = 'light' | 'dark' | 'system';
+export interface BusinessSettings {
+  branding: { appName: string; tagline: string; accent: Accent; theme: Theme };
+  profile: { address: string; email: string; taxId: string };
+  catalog: { productLabel: string; customerLabel: string; defaultUnit: string; units: string[]; categories: string[] };
+  billing: { invoicePrefix: string; defaultCreditTermsDays: number; paymentMethods: PaymentMode[]; taxRate: number; footer: string };
+  modules: { reports: boolean; payments: boolean };
+}
+
+export interface ProviderConnection {
+  provider: 'openai' | 'gemini' | 'groq' | 'custom';
+  endpoint: string;
+  model: string;
+  hasApiKey: boolean;
+}
+export interface Connections { primary: ProviderConnection; fallback: ProviderConnection }
+export interface BusinessUpdate {
+  name: string; phone: string; currency: string; logoUrl: string;
+  invoiceTrigger: 'Packed' | 'Delivered'; categoryTemplate: string;
+  settings: BusinessSettings;
+}
+export interface ProductInput { name: string; unit: string; currentPrice: number; category?: string }
+export interface CustomerInput { name: string; phone: string; creditTermsDays: number }
+export interface OrderInput { customerId: string; notes?: string; items: { productId: string; quantity: number }[] }
+export interface PaymentInput { customerId: string; amount: number; mode: PaymentMode; date: string; reference?: string; notes?: string }
 
 export interface User {
   id: string;
@@ -24,6 +53,7 @@ export interface Customer {
   name: string;
   phone: string;
   credit_terms_days: number;
+  active: boolean;
   total_billed?: number;
   total_paid?: number;
   outstanding_balance?: number;
@@ -37,6 +67,7 @@ export interface Product {
   unit: string;
   current_price: number;
   active: boolean;
+  category?: string | null;
 }
 
 export interface OrderItem {
@@ -66,6 +97,10 @@ export interface Order {
   status: OrderStatus;
   source: 'manual' | 'whatsapp_text' | 'whatsapp_image';
   total_amount: number;
+  subtotal?: number;
+  tax?: number;
+  tax_rate?: number;
+  invoice_prefix?: string;
   notes: string | null;
   created_at: string;
   confirmed_at: string | null;
@@ -81,6 +116,10 @@ export interface Order {
 export interface Invoice {
   id: string;
   invoice_no: number;
+  invoice_prefix?: string;
+  order_id: string;
+  order_no?: number;
+  customer_id: string;
   customer_name: string;
   customer_phone: string;
   total: number;
@@ -88,12 +127,18 @@ export interface Invoice {
   tax: number;
   status: InvoiceStatus;
   allocated_amount: number;
+  paid_amount?: number;
   remaining_amount: number;
+  tax_rate?: number;
+  credit_terms_days?: number;
+  billing_footer?: string;
+  items?: Array<{ product_name: string; quantity: number; unit: string; unit_price: number; total: number }>;
   created_at: string;
 }
 
 export interface Payment {
   id: string;
+  customer_id: string;
   customer_name: string;
   amount: number;
   mode: PaymentMode;

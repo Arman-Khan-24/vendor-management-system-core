@@ -1,179 +1,65 @@
-import React, { useState } from 'react';
-import { Card, Badge, Button, Input } from '../../components/ui';
-import { Customer } from '../../types';
-import { formatCurrency, formatDate } from '../../utils/formatters';
-import { Users, Phone, Calendar, ArrowRight, Plus, Search, FileText } from 'lucide-react';
-
-interface CustomersViewProps {
+import { useState } from 'react';
+import { Archive, ArrowUpRight, Download, Pencil, Plus, RotateCcw, Users } from 'lucide-react';
+import { Badge, Button, EmptyState, ErrorNotice, Input, Modal, PageHeader, SearchBox } from '../../components/ui';
+import type { Customer, CustomerInput } from '../../types';
+import { downloadCsv, errorMessage } from '../../utils/formatters';
+import { useBusiness } from '../settings/businessSettings';
+interface Props {
   customers: Customer[];
   onSelectCustomer: (customer: Customer) => void;
-  onCreateCustomer: (data: { name: string; phone: string; creditTermsDays: number }) => void;
+  onCreateCustomer: (data: CustomerInput) => Promise<void>;
+  onUpdateCustomer: (id: string, data: Partial<CustomerInput> & { active?: boolean }) => Promise<void>;
+  onRecordPayment: (id: string) => void;
 }
-
-export function CustomersView({
-  customers,
-  onSelectCustomer,
-  onCreateCustomer
-}: CustomersViewProps) {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [showAddModal, setShowAddModal] = useState(false);
+export function CustomersView({ customers, onSelectCustomer, onCreateCustomer, onUpdateCustomer, onRecordPayment }: Props) {
+  const { settings, money } = useBusiness();
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('active');
+  const [editing, setEditing] = useState<Customer | 'new' | null>(null);
+  const [archive, setArchive] = useState<Customer | null>(null);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
-  const [creditTermsDays, setCreditTermsDays] = useState(7);
-
-  const filtered = customers.filter(
-    (c) =>
-      c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      c.phone.includes(searchTerm)
-  );
-
-  const handleAddSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name || !phone) return;
-    onCreateCustomer({ name, phone, creditTermsDays });
-    setShowAddModal(false);
-    setName('');
-    setPhone('');
-    setCreditTermsDays(7);
+  const [terms, setTerms] = useState('7');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const visible = customers.filter(c => (filter === 'archived' ? !c.active : c.active) && (filter !== 'dues' || Number(c.outstanding_balance) > 0) && (c.name + ' ' + c.phone).toLowerCase().includes(search.toLowerCase()));
+  const open = (customer: Customer | 'new') => {
+    setEditing(customer); setError(null);
+    setName(customer === 'new' ? '' : customer.name);
+    setPhone(customer === 'new' ? '' : customer.phone);
+    setTerms(String(customer === 'new' ? settings.billing.defaultCreditTermsDays : customer.credit_terms_days));
   };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Customers</h2>
-          <p className="text-xs text-slate-500 mt-0.5">Manage accounts, credit terms, and ledger balances</p>
-        </div>
-
-        <Button variant="primary" size="sm" onClick={() => setShowAddModal(true)}>
-          <Plus className="w-4 h-4" /> Add Customer
-        </Button>
-      </div>
-
-      {/* Search Input */}
-      <div className="relative max-w-md">
-        <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-        <input
-          type="text"
-          placeholder="Search by restaurant name or phone..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200/80 rounded-2xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
-        />
-      </div>
-
-      {/* Customers Cards Grid */}
-      {filtered.length === 0 ? (
-        <Card className="text-center py-12">
-          <Users className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-          <h4 className="text-sm font-bold text-slate-700">No customers found</h4>
-          <p className="text-xs text-slate-400 mt-1">Add your restaurant or wholesale clients to get started.</p>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map((customer) => {
-            const outstanding = customer.outstanding_balance || 0;
-            const hasDue = outstanding > 0;
-            return (
-              <Card
-                key={customer.id}
-                className="hover:border-slate-300 transition-all flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-start justify-between gap-2 mb-3">
-                    <div>
-                      <h4 className="text-base font-bold text-slate-900 leading-tight">{customer.name}</h4>
-                      <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-1 font-medium">
-                        <Phone className="w-3.5 h-3.5 text-slate-400" /> {customer.phone}
-                      </p>
-                    </div>
-                    <Badge variant={hasDue ? 'warning' : 'success'}>
-                      {hasDue ? 'Outstanding' : 'Clear'}
-                    </Badge>
-                  </div>
-
-                  {/* Balance details */}
-                  <div className="p-3 bg-slate-50 rounded-2xl space-y-1.5 my-3">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-slate-500">Outstanding:</span>
-                      <span className={`font-extrabold ${hasDue ? 'text-amber-700' : 'text-slate-800'}`}>
-                        {formatCurrency(outstanding)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-[11px] text-slate-400">
-                      <span>Total Billed:</span>
-                      <span>{formatCurrency(customer.total_billed || 0)}</span>
-                    </div>
-                    <div className="flex justify-between text-[11px] text-slate-400">
-                      <span>Credit Terms:</span>
-                      <span>{customer.credit_terms_days} days</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                  <span className="text-[10px] text-slate-400">
-                    Last: {customer.last_order_date ? formatDate(customer.last_order_date) : 'Never'}
-                  </span>
-                  <button
-                    onClick={() => onSelectCustomer(customer)}
-                    className="text-xs font-bold text-brand-600 hover:text-brand-700 flex items-center gap-1"
-                  >
-                    Statement <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Add Customer Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
-            <h3 className="text-lg font-bold text-slate-900">Add New Customer</h3>
-            <form onSubmit={handleAddSubmit} className="space-y-4">
-              <Input
-                label="Customer / Business Name"
-                placeholder="e.g. Royal Orchid Hotel"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-              />
-              <Input
-                label="WhatsApp Phone Number"
-                placeholder="e.g. 9876543210"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                required
-              />
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">
-                  Credit Terms (Days)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  max="180"
-                  value={creditTermsDays}
-                  onChange={(e) => setCreditTermsDays(parseInt(e.target.value, 10) || 7)}
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-semibold"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" size="sm" onClick={() => setShowAddModal(false)}>
-                  Cancel
-                </Button>
-                <Button variant="primary" size="sm" type="submit">
-                  Save Customer
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true); setError(null);
+    try {
+      if (!name.trim()) throw new Error('Enter a customer name.');
+      const data = { name: name.trim(), phone: phone.trim(), creditTermsDays: Number(terms) };
+      if (editing === 'new') await onCreateCustomer(data);
+      else if (editing) await onUpdateCustomer(editing.id, data);
+      setEditing(null);
+    } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
+  };
+  const changeActive = async (customer: Customer, active: boolean) => {
+    setBusy(true); setActionError(null);
+    try { await onUpdateCustomer(customer.id, { active }); setArchive(null); }
+    catch (e) { setActionError(errorMessage(e)); } finally { setBusy(false); }
+  };
+  return <div className="page-stack">
+    <PageHeader eyebrow="People behind the orders" title={settings.catalog.customerLabel} description="Their orders, payment terms, and balances. All together." actions={<><Button variant="outline" disabled={!visible.length} onClick={() => downloadCsv(['Name', 'Phone', 'Credit days', 'Billed', 'Paid', 'Balance'], visible.map(c => [c.name, c.phone, c.credit_terms_days, c.total_billed, c.total_paid, c.outstanding_balance]), 'customers.csv')}><Download size={17} aria-hidden="true" />Export</Button><Button onClick={() => open('new')}><Plus size={18} aria-hidden="true" />Add customer</Button></>} />
+    <ErrorNotice message={actionError} />
+    <div className="filter-bar"><SearchBox label="Search customers" value={search} onChange={setSearch} placeholder="Search a name or phone number…" /><div className="chips">{[['active', 'Active'], ['dues', 'With dues'], ['archived', 'Archived']].map(([id, label]) => <button type="button" key={id} className={'chip ' + (filter === id ? 'selected' : '')} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>)}</div></div>
+    {!visible.length ? <EmptyState icon={<Users size={28} />} title={search ? 'No matching customers' : filter === 'dues' ? 'All caught up' : filter === 'archived' ? 'No archived customers' : 'Meet your first customer'} description={search ? 'Try another name or phone number.' : filter === 'dues' ? 'Your active customers have no outstanding balances.' : filter === 'archived' ? 'Archived customers and their statements remain available here.' : 'Add a customer to start taking orders and tracking payments.'} action={filter === 'active' && !search ? <Button onClick={() => open('new')}>Add your first customer</Button> : undefined} /> :
+      <div className="customer-grid">{visible.map((c, index) => <div className={'card customer-card ' + (!c.active ? 'archived' : '')} key={c.id}>
+        <div className="row"><div className={'item-icon ' + ['tonal', 'tonal-peach', 'tonal-lavender'][index % 3]}><Users size={21} aria-hidden="true" /></div><div className="grow"><h3>{c.name}</h3><a className="small muted" href={'tel:' + c.phone.replace(/[^\d+]/g, '')}>{c.phone}</a></div><Button variant="ghost" className="icon-button" aria-label={'Edit ' + c.name} onClick={() => open(c)}><Pencil size={17} /></Button></div>
+        <div className="customer-balance"><div className="row between"><span>{Number(c.outstanding_balance) < 0 ? 'Customer credit' : 'Outstanding balance'}</span><Badge variant={Number(c.outstanding_balance) > 0 ? 'warning' : 'success'}>{Number(c.outstanding_balance) > 0 ? 'Payment due' : Number(c.outstanding_balance) < 0 ? 'In credit' : 'Settled'}</Badge></div><strong className="numeric">{money(Math.abs(Number(c.outstanding_balance || 0)))}</strong><span>{c.credit_terms_days === 0 ? 'Due on invoice date' : c.credit_terms_days + ' days to pay'}</span></div>
+        <div className="row between wrap"><Button variant="secondary" size="sm" onClick={() => onSelectCustomer(c)}>Statement<ArrowUpRight size={15} aria-hidden="true" /></Button>{c.active ? <Button variant="ghost" className="icon-button" aria-label={'Archive ' + c.name} onClick={() => { setArchive(c); setActionError(null); }}><Archive size={17} /></Button> : <Button variant="ghost" size="sm" disabled={busy} onClick={() => changeActive(c, true)}><RotateCcw size={16} aria-hidden="true" />Restore</Button>}</div>
+        {settings.modules.payments && Number(c.outstanding_balance) > 0 && <Button variant="outline" size="sm" onClick={() => onRecordPayment(c.id)}>Record payment</Button>}
+      </div>)}</div>}
+    <p className="muted small">{visible.length} {visible.length === 1 ? 'account' : 'accounts'} shown</p>
+    <Modal isOpen={!!editing} title={editing === 'new' ? 'Add a customer' : 'Edit customer'} onClose={() => setEditing(null)} busy={busy}>
+      <form className="stack" onSubmit={save}><ErrorNotice message={error} /><Input label="Customer name" autoFocus value={name} maxLength={255} required onChange={e => setName(e.target.value)} placeholder="e.g. Green Leaf Café" /><Input label="Phone number" type="tel" value={phone} minLength={5} maxLength={25} required onChange={e => setPhone(e.target.value)} placeholder="+91 98765 43210" /><Input label="Payment terms (days)" type="number" min="0" max="365" step="1" value={terms} required onChange={e => setTerms(e.target.value)} hint="Use 0 for payment due on the invoice date. New terms apply to new orders." /><div className="form-actions"><Button variant="ghost" disabled={busy} onClick={() => setEditing(null)}>Cancel</Button><Button type="submit" busy={busy}>Save customer</Button></div></form>
+    </Modal>
+    <Modal isOpen={!!archive} title="Archive customer?" onClose={() => setArchive(null)} busy={busy}><div className="stack"><p><strong>{archive?.name}</strong> will be hidden from new orders. You can still view statements, receive payments, and restore the account.</p>{Number(archive?.outstanding_balance) > 0 && <p className="form-note">This account has {money(archive?.outstanding_balance)} outstanding.</p>}<ErrorNotice message={actionError} /><div className="form-actions"><Button variant="ghost" disabled={busy} onClick={() => setArchive(null)}>Keep customer</Button><Button variant="danger" busy={busy} onClick={() => archive && changeActive(archive, false)}>Archive customer</Button></div></div></Modal>
+  </div>;
 }

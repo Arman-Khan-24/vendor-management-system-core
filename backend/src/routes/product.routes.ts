@@ -1,12 +1,13 @@
 import { Router } from 'express';
-import { authenticate } from '../middleware/auth.middleware.js';
-import { validateBody } from '../middleware/validate.middleware.js';
+import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
+import { validateBody, validateUuidParam, getPagination } from '../middleware/validate.middleware.js';
 import { createProductSchema, updateProductSchema } from '../validators/schemas.js';
 import { ProductRepository } from '../repositories/product.repo.js';
 import { AppError } from '../middleware/errorHandler.js';
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireRoles('OWNER', 'STAFF'));
+router.param('id', validateUuidParam);
 
 router.get('/', async (req, res, next) => {
   try {
@@ -14,6 +15,7 @@ router.get('/', async (req, res, next) => {
     const activeOnly = req.query.all !== 'true';
     const products = await ProductRepository.list({
       businessId: req.businessId!,
+      ...getPagination(req.query),
       search,
       activeOnly
     });
@@ -29,7 +31,8 @@ router.post('/', validateBody(createProductSchema), async (req, res, next) => {
       businessId: req.businessId!,
       name: req.body.name,
       unit: req.body.unit,
-      currentPrice: req.body.currentPrice
+      currentPrice: req.body.currentPrice,
+      category: req.body.category
     });
     res.status(201).json(product);
   } catch (err) {
@@ -77,7 +80,7 @@ router.delete('/:id', async (req, res, next) => {
     if (!deleted) {
       throw new AppError('Product not found', 404);
     }
-    res.json({ success: true, message: 'Product deleted' });
+    res.json({ success: true, message: 'Product archived' });
   } catch (err) {
     next(err);
   }

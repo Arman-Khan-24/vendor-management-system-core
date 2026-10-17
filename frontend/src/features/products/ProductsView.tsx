@@ -1,140 +1,96 @@
-import React, { useState } from 'react';
-import { Card, Badge, Button, Input } from '../../components/ui';
-import { Product } from '../../types';
-import { formatCurrency } from '../../utils/formatters';
-import { Package, Plus, Search, Tag } from 'lucide-react';
+import { useState } from 'react';
+import { Archive, Check, Download, Package, Pencil, Plus, RotateCcw, Settings2 } from 'lucide-react';
+import { Badge, Button, EmptyState, ErrorNotice, Input, Modal, PageHeader, SearchBox, Select } from '../../components/ui';
+import type { Product, ProductInput } from '../../types';
+import { downloadCsv, errorMessage } from '../../utils/formatters';
+import { useBusiness } from '../settings/businessSettings';
 
-interface ProductsViewProps {
+interface Props {
   products: Product[];
-  onCreateProduct: (data: { name: string; unit: string; currentPrice: number }) => void;
+  onCreateProduct: (data: ProductInput) => Promise<void>;
+  onUpdateProduct: (id: string, data: Partial<ProductInput> & { active?: boolean }) => Promise<void>;
+  onCustomize: () => void;
 }
-
-export function ProductsView({ products, onCreateProduct }: ProductsViewProps) {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [showAddModal, setShowAddModal] = useState(false);
+export function ProductsView({ products, onCreateProduct, onUpdateProduct, onCustomize }: Props) {
+  const { settings, money } = useBusiness();
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('active');
+  const [category, setCategory] = useState('');
+  const [sort, setSort] = useState('name');
+  const [editing, setEditing] = useState<Product | 'new' | null>(null);
+  const [archive, setArchive] = useState<Product | null>(null);
   const [name, setName] = useState('');
-  const [unit, setUnit] = useState('kg');
+  const [unit, setUnit] = useState(settings.catalog.defaultUnit);
   const [price, setPrice] = useState('');
-
-  const filtered = products.filter((p) =>
-    p.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const handleAddSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name || !price) return;
-    onCreateProduct({
-      name,
-      unit,
-      currentPrice: parseFloat(price) || 0
-    });
-    setShowAddModal(false);
-    setName('');
-    setPrice('');
+  const [formCategory, setFormCategory] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const categories = [...new Set([...settings.catalog.categories, ...products.map(p => p.category || '').filter(Boolean)])].sort();
+  const filtered = products.filter(p => (filter === 'all' || (filter === 'active' ? p.active : !p.active)) && (!category || p.category === category) && (p.name + ' ' + (p.category || '')).toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => sort === 'price' ? Number(a.current_price) - Number(b.current_price) : a.name.localeCompare(b.name));
+  const open = (product: Product | 'new') => {
+    setEditing(product); setError(null);
+    setName(product === 'new' ? '' : product.name);
+    setUnit(product === 'new' ? settings.catalog.defaultUnit : product.unit);
+    setPrice(product === 'new' ? '' : String(product.current_price));
+    setFormCategory(product === 'new' ? '' : product.category || '');
   };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Product Catalog</h2>
-          <p className="text-xs text-slate-500 mt-0.5">Manage custom items, current prices, and configurable units</p>
-        </div>
-
-        <Button variant="primary" size="sm" onClick={() => setShowAddModal(true)}>
-          <Plus className="w-4 h-4" /> Add Product
-        </Button>
-      </div>
-
-      <div className="relative max-w-md">
-        <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-        <input
-          type="text"
-          placeholder="Search products..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200/80 rounded-2xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
-        />
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-        {filtered.map((product) => (
-          <Card key={product.id} className="p-4 flex flex-col justify-between hover:border-slate-300">
-            <div>
-              <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 mb-2">
-                <Tag className="w-4 h-4" />
-              </div>
-              <h4 className="text-sm font-bold text-slate-900 leading-snug">{product.name}</h4>
-              <span className="text-[11px] text-slate-400 font-medium">Unit: {product.unit}</span>
-            </div>
-
-            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-              <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Current Price</span>
-              <span className="text-sm font-black text-slate-900">
-                {formatCurrency(product.current_price)} / {product.unit}
-              </span>
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
-            <h3 className="text-lg font-bold text-slate-900">Add New Product</h3>
-            <form onSubmit={handleAddSubmit} className="space-y-4">
-              <Input
-                label="Product Name"
-                placeholder="e.g. Tomato (Hybrid)"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-              />
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">
-                  Unit
-                </label>
-                <select
-                  value={unit}
-                  onChange={(e) => setUnit(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-semibold"
-                >
-                  <option value="kg">kg (Kilogram)</option>
-                  <option value="gram">gram</option>
-                  <option value="piece">piece</option>
-                  <option value="dozen">dozen</option>
-                  <option value="box">box</option>
-                  <option value="tray">tray</option>
-                  <option value="litre">litre</option>
-                  <option value="packet">packet</option>
-                  <option value="tin">tin</option>
-                  <option value="bag">bag</option>
-                </select>
-              </div>
-
-              <Input
-                label="Current Price (₹)"
-                type="number"
-                step="any"
-                min="0"
-                placeholder="e.g. 40"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                required
-              />
-
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" size="sm" onClick={() => setShowAddModal(false)}>
-                  Cancel
-                </Button>
-                <Button variant="primary" size="sm" type="submit">
-                  Save Product
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true); setError(null);
+    try {
+      const data = { name: name.trim(), unit, currentPrice: Number(price), category: formCategory.trim() };
+      if (!data.name) throw new Error('Enter a product name.');
+      if (!Number.isFinite(data.currentPrice) || data.currentPrice < 0) throw new Error('Enter a valid price.');
+      if (editing === 'new') await onCreateProduct(data);
+      else if (editing) await onUpdateProduct(editing.id, data);
+      setEditing(null);
+    } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
+  };
+  const changeActive = async (product: Product, active: boolean) => {
+    setBusy(true); setActionError(null);
+    try { await onUpdateProduct(product.id, { active }); setArchive(null); }
+    catch (e) { setActionError(errorMessage(e)); } finally { setBusy(false); }
+  };
+  return <div className="page-stack">
+    <PageHeader eyebrow="Your everyday essentials" title={settings.catalog.productLabel === 'Products' ? 'Your catalog' : settings.catalog.productLabel} description="Keep prices current and every order a little easier." actions={<>
+      <Button variant="outline" onClick={() => downloadCsv(['Name', 'Category', 'Unit', 'Price', 'Active'], filtered.map(p => [p.name, p.category, p.unit, p.current_price, p.active]), 'catalog.csv')} disabled={!filtered.length}><Download size={17} aria-hidden="true" />Export</Button>
+      <Button onClick={() => open('new')}><Plus size={18} aria-hidden="true" />Add product</Button>
+    </>} />
+    <ErrorNotice message={actionError} />
+    <div className="filter-bar">
+      <SearchBox label="Search catalog" placeholder="Search names or categories…" value={search} onChange={setSearch} />
+      <div className="row wrap"><Select aria-label="Filter by category" value={category} onChange={e => setCategory(e.target.value)}><option value="">All categories</option>{categories.map(c => <option key={c}>{c}</option>)}</Select><Button variant="ghost" onClick={onCustomize}><Settings2 size={18} aria-hidden="true" />Customize</Button></div>
     </div>
-  );
+    <div className="filter-bar">
+      <div className="chips">{[['active', 'Active', products.filter(p => p.active).length], ['archived', 'Archived', products.filter(p => !p.active).length], ['all', 'All', products.length]].map(([id, label, count]) => <button type="button" key={id} className={'chip ' + (filter === id ? 'selected' : '')} aria-pressed={filter === id} onClick={() => setFilter(String(id))}>{label}<span className="chip-count">{count}</span></button>)}</div>
+      <Select aria-label="Sort catalog" value={sort} onChange={e => setSort(e.target.value)}><option value="name">Name A–Z</option><option value="price">Price: low to high</option></Select>
+    </div>
+    {!filtered.length ? <EmptyState icon={<Package size={28} />} title={search || category ? 'No matching products' : filter === 'archived' ? 'Nothing archived' : 'Your catalog starts here'} description={search || category ? 'Try another name or clear the filters.' : filter === 'archived' ? 'Archived products will appear here. You can restore them anytime.' : 'Add the items you sell, their units, and your current prices.'} action={search || category ? <Button variant="secondary" onClick={() => { setSearch(''); setCategory(''); }}>Clear filters</Button> : filter !== 'archived' ? <Button onClick={() => open('new')}>Add your first product</Button> : undefined} /> :
+      <div className="records">{filtered.map((product, i) => <div key={product.id} className={'record-row ' + (!product.active ? 'archived' : '')}>
+        <div className={'item-icon ' + ['tonal', 'tonal-peach', 'tonal-lavender', 'tonal-sky'][i % 4]}><Package size={21} aria-hidden="true" /></div>
+        <div className="record-title"><strong>{product.name}</strong><small>{product.category || 'Uncategorized'} · Sold by {product.unit}</small></div>
+        {!product.active && <Badge>Archived</Badge>}
+        <div className="record-price numeric"><strong>{money(product.current_price)}</strong><small>per {product.unit}</small></div>
+        <div className="record-actions"><Button variant="ghost" className="icon-button" aria-label={'Edit ' + product.name} onClick={() => open(product)}><Pencil size={18} /></Button>
+          {product.active ? <Button variant="ghost" className="icon-button" aria-label={'Archive ' + product.name} onClick={() => { setArchive(product); setActionError(null); }}><Archive size={18} /></Button> : <Button variant="secondary" size="sm" disabled={busy} onClick={() => changeActive(product, true)}><RotateCcw size={16} aria-hidden="true" />Restore</Button>}
+        </div>
+      </div>)}</div>}
+    <p className="list-caption"><span>{filtered.length} of {products.length} products</span><span>Price changes apply to new orders.</span></p>
+    <Modal isOpen={!!editing} onClose={() => setEditing(null)} title={editing === 'new' ? 'Add a product' : 'Edit product'} busy={busy}>
+      <form className="stack" onSubmit={save}>
+        <ErrorNotice message={error} />
+        <Input label="Product name" autoFocus value={name} maxLength={255} required onChange={e => setName(e.target.value)} placeholder="e.g. Fresh tomatoes" />
+        <div className="form-grid"><Input label="Price per unit" type="number" step="0.01" min="0" value={price} required onChange={e => setPrice(e.target.value)} placeholder="0.00" />
+          <Select label="Unit" value={unit} onChange={e => setUnit(e.target.value)}>{[...new Set([...settings.catalog.units, unit])].map(u => <option key={u}>{u}</option>)}</Select></div>
+        <Input label="Category" value={formCategory} maxLength={100} onChange={e => setFormCategory(e.target.value)} list="product-categories" placeholder="Optional" />
+        <datalist id="product-categories">{categories.map(c => <option value={c} key={c} />)}</datalist>
+        <p className="form-note">Existing orders keep their original product details and prices.</p>
+        <div className="form-actions"><Button variant="ghost" disabled={busy} onClick={() => setEditing(null)}>Cancel</Button><Button type="submit" busy={busy}><Check size={17} aria-hidden="true" />Save product</Button></div>
+      </form>
+    </Modal>
+    <Modal isOpen={!!archive} title="Archive product?" onClose={() => setArchive(null)} busy={busy}>
+      <div className="stack"><p><strong>{archive?.name}</strong> will be hidden from new orders. Past orders and invoices stay available.</p><ErrorNotice message={actionError} /><div className="form-actions"><Button variant="ghost" disabled={busy} onClick={() => setArchive(null)}>Keep product</Button><Button variant="danger" busy={busy} onClick={() => archive && changeActive(archive, false)}>Archive product</Button></div></div>
+    </Modal>
+  </div>;
 }

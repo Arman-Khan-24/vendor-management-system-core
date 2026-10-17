@@ -1,18 +1,23 @@
 import { Router } from 'express';
-import { authenticate } from '../middleware/auth.middleware.js';
+import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
+import { validateUuidParam, getPagination } from '../middleware/validate.middleware.js';
 import { InvoiceRepository } from '../repositories/invoice.repo.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { InvoiceStatus } from '../models/types.js';
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireRoles('OWNER', 'STAFF'));
+router.param('id', validateUuidParam);
+router.param('orderId', validateUuidParam);
 
 router.get('/', async (req, res, next) => {
   try {
     const customerId = req.query.customerId as string | undefined;
     const status = req.query.status as InvoiceStatus | undefined;
+    if (status && !['Pending', 'Partial', 'Paid'].includes(status)) throw new AppError('Invalid invoice status filter.', 400);
     const invoices = await InvoiceRepository.list({
       businessId: req.businessId!,
+      ...getPagination(req.query),
       customerId,
       status
     });

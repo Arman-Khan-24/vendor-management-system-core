@@ -1,6 +1,6 @@
 import { OrderRepository } from '../repositories/order.repo.js';
 import { InvoiceRepository } from '../repositories/invoice.repo.js';
-import { BusinessRepository } from '../repositories/business.repo.js';
+import { withTransaction } from '../database/connection.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { OrderStatus } from '../models/types.js';
 
@@ -25,7 +25,7 @@ export class OrderService {
     }
 
     for (const item of items) {
-      if (item.quantity <= 0) {
+      if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
         throw new AppError(`Item quantity must be greater than 0`, 400);
       }
     }
@@ -51,27 +51,15 @@ export class OrderService {
     newStatus: OrderStatus;
     changedBy?: string;
   }) {
-    // 1. Perform status transition
-    const order = await OrderRepository.updateStatus({
-      orderId,
-      businessId,
-      newStatus,
-      changedBy
+    return withTransaction(async client => {
+      const result = await client.query('SELECT invoice_trigger FROM businesses WHERE id = $1 FOR UPDATE', [businessId]);
+      if (!result.rows[0]) throw new AppError('Business not found', 404);
+      await OrderRepository.updateStatus({ orderId, businessId, newStatus, changedBy, client });
+      const trigger = result.rows[0].invoice_trigger;
+      if (newStatus === 'Delivered' || (newStatus === 'Packed' && trigger === 'Packed')) {
+        await InvoiceRepository.generateInvoiceForOrder({ businessId, orderId, client });
+      }
+      return (await OrderRepository.findById({ orderId, businessId, client }))!;
     });
-
-    // 2. Check if invoice trigger is hit for this tenant
-    const business = await BusinessRepository.findById(businessId);
-    const trigger = business?.invoice_trigger || 'Delivered';
-
-    if (newStatus === trigger) {
-      // Automatically generate invoice idempotently
-      await InvoiceRepository.generateInvoiceForOrder({
-        businessId,
-        orderId
-      });
-    }
-
-    // Refresh and return full order details
-    return await OrderRepository.findById({ orderId, businessId });
   }
 }

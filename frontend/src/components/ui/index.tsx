@@ -1,144 +1,88 @@
-import React from 'react';
+import { useEffect, useId, useRef } from 'react';
+import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
+import { AlertCircle, ChevronRight, LoaderCircle, Search, X } from 'lucide-react';
 
-export function Card({
-  children,
-  className = '',
-  onClick
-}: {
-  children: React.ReactNode;
-  className?: string;
-  onClick?: () => void;
-}) {
-  return (
-    <div
-      onClick={onClick}
-      className={`bg-white rounded-3xl p-5 border border-slate-100 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.04)] transition-all duration-200 ${
-        onClick ? 'cursor-pointer hover:border-slate-200 hover:shadow-[0_8px_30px_-4px_rgba(0,0,0,0.08)] active:scale-[0.99]' : ''
-      } ${className}`}
-    >
-      {children}
-    </div>
-  );
+export function Card({ children, className = '', onClick }: { children: ReactNode; className?: string; onClick?: () => void }) {
+  return onClick
+    ? <button type="button" onClick={onClick} className={'card card-button ' + className}>{children}</button>
+    : <div className={'card ' + className}>{children}</div>;
 }
-
-export function Button({
-  children,
-  variant = 'primary',
-  size = 'md',
-  className = '',
-  disabled,
-  onClick,
-  title,
-  type = 'button'
-}: {
-  children: React.ReactNode;
-  variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
-  size?: 'sm' | 'md' | 'lg';
-  className?: string;
-  disabled?: boolean;
-  onClick?: () => void;
-  title?: string;
-  type?: 'button' | 'submit' | 'reset';
-}) {
-  const base = 'inline-flex items-center justify-center font-semibold rounded-2xl transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] select-none';
-  
-  const sizes = {
-    sm: 'text-xs px-3.5 py-2 gap-1.5',
-    md: 'text-sm px-4 py-2.5 gap-2',
-    lg: 'text-base px-6 py-3.5 gap-2.5 rounded-3xl'
-  };
-
-  const variants = {
-    primary: 'bg-brand-500 hover:bg-brand-600 text-white shadow-sm shadow-brand-500/20',
-    secondary: 'bg-slate-900 hover:bg-slate-800 text-white shadow-sm',
-    outline: 'border border-slate-200 hover:bg-slate-50 text-slate-700',
-    ghost: 'hover:bg-slate-100 text-slate-600',
-    danger: 'bg-rose-500 hover:bg-rose-600 text-white shadow-sm shadow-rose-500/20'
-  };
-
-  return (
-    <button
-      type={type}
-      disabled={disabled}
-      onClick={onClick}
-      title={title}
-      className={`${base} ${sizes[size]} ${variants[variant]} ${className}`}
-    >
-      {children}
-    </button>
-  );
+export function Button({ children, variant = 'primary', size = 'md', className = '', busy, disabled, type = 'button', ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger'; size?: 'sm' | 'md' | 'lg'; busy?: boolean }) {
+  return <button {...props} type={type} disabled={disabled || busy} aria-busy={busy || undefined} className={'btn btn-' + variant + ' btn-' + size + ' ' + className}>
+    {busy && <LoaderCircle aria-hidden="true" size={18} className="spin" />}{children}
+  </button>;
 }
-
-export function Badge({
-  children,
-  variant = 'default',
-  className = ''
-}: {
-  children: React.ReactNode;
-  variant?: 'default' | 'success' | 'warning' | 'info' | 'danger';
-  className?: string;
-}) {
-  const variants = {
-    default: 'bg-slate-100 text-slate-700',
-    success: 'bg-emerald-50 text-emerald-700 border border-emerald-200/50',
-    warning: 'bg-amber-50 text-amber-700 border border-amber-200/50',
-    info: 'bg-sky-50 text-sky-700 border border-sky-200/50',
-    danger: 'bg-rose-50 text-rose-700 border border-rose-200/50'
-  };
-
-  return (
-    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${variants[variant]} ${className}`}>
-      {children}
-    </span>
-  );
+export function Badge({ children, variant = 'default', className = '' }: { children: ReactNode; variant?: 'default' | 'success' | 'warning' | 'info' | 'danger'; className?: string }) {
+  return <span className={'badge badge-' + variant + ' ' + className}>{children}</span>;
 }
-
-export function Input({
-  label,
-  error,
-  ...props
-}: React.InputHTMLAttributes<HTMLInputElement> & { label?: string; error?: string }) {
-  return (
-    <div className="w-full space-y-1.5">
-      {label && <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">{label}</label>}
-      <input
-        {...props}
-        className={`w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 text-sm transition-all ${
-          error ? 'border-rose-400 bg-rose-50/20' : ''
-        } ${props.className || ''}`}
-      />
-      {error && <p className="text-xs text-rose-500">{error}</p>}
-    </div>
-  );
+export function Input({ label, error, hint, id, className = '', ...props }: InputHTMLAttributes<HTMLInputElement> & { label?: string; error?: string; hint?: string }) {
+  const generated = useId();
+  const inputId = id || generated;
+  return <div className="field">
+    {label && <label htmlFor={inputId}>{label}</label>}
+    <input {...props} id={inputId} aria-invalid={!!error || undefined} aria-describedby={error || hint ? inputId + '-hint' : undefined} className={'input ' + className} />
+    {(error || hint) && <p id={inputId + '-hint'} className={error ? 'field-error' : 'field-hint'}>{error || hint}</p>}
+  </div>;
 }
-
-export function Modal({
-  isOpen,
-  onClose,
-  title,
-  children
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  title: string;
-  children: React.ReactNode;
-}) {
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 shadow-2xl border border-slate-100 animate-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-5">
-          <h3 className="text-lg font-bold text-slate-900">{title}</h3>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-slate-100 text-slate-500 transition-colors"
-          >
-            ✕
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
+export function Select({ label, hint, id, className = '', children, ...props }: SelectHTMLAttributes<HTMLSelectElement> & { label?: string; hint?: string }) {
+  const generated = useId();
+  const inputId = id || generated;
+  return <div className="field">
+    {label && <label htmlFor={inputId}>{label}</label>}
+    <select {...props} id={inputId} className={'input ' + className} aria-describedby={hint ? inputId + '-hint' : undefined}>{children}</select>
+    {hint && <p id={inputId + '-hint'} className="field-hint">{hint}</p>}
+  </div>;
+}
+export function Textarea({ label, id, className = '', ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string }) {
+  const generated = useId();
+  return <div className="field"><label htmlFor={id || generated}>{label}</label><textarea {...props} id={id || generated} className={'input ' + className} /></div>;
+}
+export function SearchBox({ value, onChange, placeholder = 'Search…', label = 'Search' }: { value: string; onChange: (value: string) => void; placeholder?: string; label?: string }) {
+  return <div className="search-box"><Search size={19} aria-hidden="true" /><input type="search" aria-label={label} placeholder={placeholder} value={value} onChange={event => onChange(event.target.value)} /></div>;
+}
+export function PageHeader({ eyebrow, title, description, actions }: { eyebrow?: string; title: string; description?: string; actions?: ReactNode }) {
+  return <div className="page-header"><div>{eyebrow && <p className="eyebrow">{eyebrow}</p>}<h1>{title}</h1>{description && <p className="page-description">{description}</p>}</div>{actions && <div className="page-actions">{actions}</div>}</div>;
+}
+export function EmptyState({ icon, title, description, action }: { icon?: ReactNode; title: string; description: string; action?: ReactNode }) {
+  return <div className="empty-state">{icon && <div className="empty-icon">{icon}</div>}<h3>{title}</h3><p>{description}</p>{action}</div>;
+}
+export function ErrorNotice({ message, retry }: { message: string | null; retry?: () => void }) {
+  if (!message) return null;
+  return <div className="error-notice" role="alert"><AlertCircle size={20} aria-hidden="true" /><p>{message}</p>{retry && <Button variant="outline" size="sm" onClick={retry}>Try again</Button>}</div>;
+}
+export function LoadingState({ label = 'Loading your workspace…' }: { label?: string }) {
+  return <div className="loading-state" role="status"><LoaderCircle className="spin" size={28} aria-hidden="true" /><p>{label}</p></div>;
+}
+export function Modal({ isOpen, onClose, title, children, wide = false, busy = false }: { isOpen: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean; busy?: boolean }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!isOpen || !dialog) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    dialog.showModal();
+    document.body.style.overflow = 'hidden';
+    return () => {
+      dialog.close();
+      document.body.style.overflow = previousOverflow;
+      previous?.focus();
+    };
+  }, [isOpen]);
+  return <dialog ref={ref} aria-labelledby={titleId} className={'modal ' + (wide ? 'modal-wide' : '')} onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
+    <div className="modal-header"><h2 id={titleId}>{title}</h2><Button aria-label="Close dialog" variant="ghost" className="icon-button" disabled={busy} onClick={onClose}><X size={20} /></Button></div>
+    {isOpen && <div className="modal-body">{children}</div>}
+  </dialog>;
+}
+export function Switch({ checked, onChange, label, description, disabled = false }: { checked: boolean; onChange: (value: boolean) => void; label: string; description?: string; disabled?: boolean }) {
+  const id = useId();
+  return <div className="switch-row"><div><label htmlFor={id}>{label}</label>{description && <p>{description}</p>}</div>
+    <button type="button" id={id} role="switch" aria-checked={checked} aria-label={label} disabled={disabled} className={'switch ' + (checked ? 'on' : '')} onClick={() => onChange(!checked)}><span /></button>
+  </div>;
+}
+export function SectionHeading({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
+  return <div className="section-heading"><div><h2>{title}</h2>{description && <p>{description}</p>}</div>{action}</div>;
+}
+export function TextLink({ children, onClick }: { children: ReactNode; onClick: () => void }) {
+  return <button className="text-link" type="button" onClick={onClick}>{children}<ChevronRight size={16} aria-hidden="true" /></button>;
 }

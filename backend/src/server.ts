@@ -4,12 +4,11 @@ import { runMigrations } from './database/migrator.js';
 
 async function bootstrap() {
   try {
-    // Run database migrations on start if DB connected
-    try {
-      await runMigrations();
-    } catch (migErr) {
-      console.warn('⚠️ Warning: Migrations failed or database not reachable at startup:', (migErr as any).message);
+    if (config.env === 'production' && (!process.env.JWT_SECRET || !process.env.DATABASE_URL)) {
+      throw new Error('Production requires explicit JWT_SECRET and DATABASE_URL configuration.');
     }
+    // Do not accept saves until the complete schema is ready.
+    await runMigrations();
 
     const app = createApp();
     app.listen(config.port, '0.0.0.0', () => {

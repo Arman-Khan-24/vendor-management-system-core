@@ -1,182 +1,61 @@
-import React, { useState } from 'react';
-import { Card, Badge, Button, Input } from '../../components/ui';
-import { Customer, Payment } from '../../types';
-import { formatCurrency, formatDate } from '../../utils/formatters';
-import { CreditCard, Plus, ArrowDownLeft, CheckCircle2 } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowDownLeft, CreditCard, Download, Plus } from 'lucide-react';
+import { Badge, Button, EmptyState, ErrorNotice, Input, Modal, PageHeader, SearchBox, Select, Textarea } from '../../components/ui';
+import type { Customer, Payment, PaymentInput, PaymentMode } from '../../types';
+import { downloadCsv, errorMessage, formatDate, localDate } from '../../utils/formatters';
+import { useBusiness } from '../settings/businessSettings';
 
-interface PaymentsViewProps {
-  payments: Payment[];
-  customers: Customer[];
-  onRecordPayment: (data: any) => void;
-  showRecordModal: boolean;
-  setShowRecordModal: (val: boolean) => void;
+export const paymentLabels: Record<PaymentMode, string> = { cash: 'Cash', upi: 'UPI', bank_transfer: 'Bank transfer', cheque: 'Cheque' };
+export function PaymentsView({ payments, onOpenRecord, onStatement }: { payments: Payment[]; onOpenRecord: () => void; onStatement: (id: string) => void }) {
+  const { money } = useBusiness();
+  const [search, setSearch] = useState('');
+  const [mode, setMode] = useState('');
+  const [detail, setDetail] = useState<Payment | null>(null);
+  const visible = payments.filter(p => (!mode || p.mode === mode) && (p.customer_name + ' ' + (p.reference || '')).toLowerCase().includes(search.toLowerCase()));
+  const total = visible.reduce((sum, p) => sum + Number(p.amount), 0);
+  return <div className="page-stack">
+    <PageHeader eyebrow="Money in, peace of mind" title="Payments" description="A clear record of every collection, on the date it happened." actions={<><Button variant="outline" disabled={!visible.length} onClick={() => downloadCsv(['Date', 'Customer', 'Amount', 'Method', 'Reference', 'Notes'], visible.map(p => [p.date, p.customer_name, p.amount, paymentLabels[p.mode], p.reference, p.notes]), 'payments.csv')}><Download size={17} aria-hidden="true" />Export</Button><Button onClick={onOpenRecord}><Plus size={18} aria-hidden="true" />Record payment</Button></>} />
+    <div className="card tonal"><div className="row between"><div><p className="small">Total in this view</p><p className="stat-value numeric" style={{ marginTop: 10 }}>{money(total)}</p><p className="small" style={{ marginTop: 8 }}>{visible.length} recorded payments</p></div><div className="hero-icon" style={{ position: 'static' }}><ArrowDownLeft size={24} aria-hidden="true" /></div></div></div>
+    <div className="filter-bar"><SearchBox value={search} onChange={setSearch} label="Search payments" placeholder="Customer or payment reference…" /><Select aria-label="Filter by payment method" value={mode} onChange={e => setMode(e.target.value)}><option value="">All payment methods</option>{(Object.keys(paymentLabels) as PaymentMode[]).map(m => <option value={m} key={m}>{paymentLabels[m]}</option>)}</Select></div>
+    {!visible.length ? <EmptyState icon={<CreditCard size={28} />} title={search || mode ? 'No matching payments' : 'Record your first collection'} description={search || mode ? 'Try another search or payment method.' : 'Money received is applied to the customer’s oldest unpaid invoices.'} action={<Button onClick={onOpenRecord}>Record a payment</Button>} /> :
+      <div className="records">{visible.map(p => <div className="record-row" key={p.id}><div className="item-icon tonal"><ArrowDownLeft size={21} aria-hidden="true" /></div><div className="record-title"><strong>{p.customer_name}</strong><small>{formatDate(p.date)} · {p.reference || 'No reference'}</small></div><Badge>{paymentLabels[p.mode]}</Badge><div className="record-price numeric"><strong>{money(p.amount)}</strong><small>Received</small></div><div className="record-actions"><Button variant="secondary" size="sm" onClick={() => setDetail(p)}>Details</Button></div></div>)}</div>}
+    <Modal isOpen={!!detail} title="Payment details" onClose={() => setDetail(null)}>
+      {detail && <div className="stack"><div className="total-box"><span>Payment received</span><strong>{money(detail.amount)}</strong></div><div className="detail-lines">{[['Customer', detail.customer_name], ['Payment date', formatDate(detail.date)], ['Method', paymentLabels[detail.mode]], ['Reference', detail.reference || 'Not provided']].map(([label, value]) => <div className="detail-line" key={label}><span className="muted">{label}</span><strong>{value}</strong></div>)}</div>{detail.notes && <p className="form-note">{detail.notes}</p>}<p className="muted small">Payments settle the oldest unpaid invoices first. Any remainder stays as customer credit.</p><div className="form-actions"><Button variant="ghost" onClick={() => setDetail(null)}>Close</Button><Button onClick={() => { setDetail(null); onStatement(detail.customer_id); }}>View customer statement</Button></div></div>}
+    </Modal>
+  </div>;
 }
-
-export function PaymentsView({
-  payments,
-  customers,
-  onRecordPayment,
-  showRecordModal,
-  setShowRecordModal
-}: PaymentsViewProps) {
-  const [customerId, setCustomerId] = useState(customers[0]?.id || '');
+export function RecordPaymentModal({ customers, initialCustomerId, onClose, onSubmit, onSetup }: { customers: Customer[]; initialCustomerId?: string; onClose: () => void; onSubmit: (data: PaymentInput) => Promise<void>; onSetup: () => void }) {
+  const { money, settings } = useBusiness();
+  const [customerId, setCustomerId] = useState(initialCustomerId || customers.find(c => c.active)?.id || customers[0]?.id || '');
   const [amount, setAmount] = useState('');
-  const [mode, setMode] = useState('upi');
+  const [mode, setMode] = useState<PaymentMode>(settings.billing.paymentMethods[0] || 'cash');
+  const [date, setDate] = useState(localDate());
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
-
-  const handleRecordSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customerId || !amount) return;
-    onRecordPayment({
-      customerId,
-      amount: parseFloat(amount),
-      mode,
-      reference,
-      notes
-    });
-    setShowRecordModal(false);
-    setAmount('');
-    setReference('');
-    setNotes('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const customer = customers.find(c => c.id === customerId);
+  const outstanding = Math.max(0, Number(customer?.outstanding_balance || 0));
+  const credit = Math.max(0, Number(amount || 0) - outstanding);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true); setError(null);
+    try {
+      if (!customerId || !customer) throw new Error('Choose a customer.');
+      if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) throw new Error('Enter an amount greater than zero.');
+      await onSubmit({ customerId, amount: Number(amount), mode, date, reference: reference.trim(), notes: notes.trim() });
+      onClose();
+    } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Payments & Ledger</h2>
-          <p className="text-xs text-slate-500 mt-0.5">Automated FIFO settlement applied across customer invoices</p>
-        </div>
-
-        <Button variant="primary" size="sm" onClick={() => setShowRecordModal(true)}>
-          <Plus className="w-4 h-4" /> Record Payment
-        </Button>
-      </div>
-
-      {payments.length === 0 ? (
-        <Card className="text-center py-12">
-          <CreditCard className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-          <h4 className="text-sm font-bold text-slate-700">No payments recorded yet</h4>
-          <p className="text-xs text-slate-400 mt-1">Record collections from customers via cash, UPI, or bank transfer.</p>
-        </Card>
-      ) : (
-        <div className="space-y-3">
-          {payments.map((p) => (
-            <Card key={p.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-                  <ArrowDownLeft className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-slate-900">{p.customer_name}</h4>
-                  <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
-                    <span className="font-semibold text-slate-600 uppercase">{p.mode}</span>
-                    <span>•</span>
-                    <span>{formatDate(p.date)}</span>
-                    {p.reference && (
-                      <>
-                        <span>•</span>
-                        <span>Ref: {p.reference}</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between sm:justify-end gap-4 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                {p.allocations && p.allocations.length > 0 && (
-                  <div className="text-right hidden md:block">
-                    <p className="text-[10px] text-slate-400 uppercase font-bold">FIFO Settled</p>
-                    <p className="text-xs text-slate-600 font-semibold">
-                      {p.allocations.map(a => `INV-${String(a.invoice_no).padStart(4, '0')}`).join(', ')}
-                    </p>
-                  </div>
-                )}
-                <div className="text-right">
-                  <span className="text-base font-black text-emerald-700 block">
-                    +{formatCurrency(p.amount)}
-                  </span>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {showRecordModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
-            <h3 className="text-lg font-bold text-slate-900">Record Customer Payment</h3>
-            <p className="text-xs text-slate-500">
-              Payment is automatically applied FIFO to the oldest pending invoices.
-            </p>
-
-            <form onSubmit={handleRecordSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">
-                  Select Customer
-                </label>
-                <select
-                  value={customerId}
-                  onChange={(e) => setCustomerId(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-semibold focus:outline-none"
-                  required
-                >
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} (Due: {formatCurrency(c.outstanding_balance || 0)})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <Input
-                label="Payment Amount (₹)"
-                type="number"
-                step="any"
-                min="1"
-                placeholder="e.g. 5000"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                required
-              />
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">
-                  Payment Mode
-                </label>
-                <select
-                  value={mode}
-                  onChange={(e) => setMode(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-semibold"
-                >
-                  <option value="upi">UPI (GPay / PhonePe / Paytm)</option>
-                  <option value="cash">Cash</option>
-                  <option value="bank_transfer">Bank Transfer (NEFT/IMPS)</option>
-                  <option value="cheque">Cheque</option>
-                </select>
-              </div>
-
-              <Input
-                label="Transaction Reference / Cheque No"
-                placeholder="Optional"
-                value={reference}
-                onChange={(e) => setReference(e.target.value)}
-              />
-
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" size="sm" onClick={() => setShowRecordModal(false)}>
-                  Cancel
-                </Button>
-                <Button variant="primary" size="sm" type="submit">
-                  Apply FIFO Payment
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  return <Modal isOpen title="Record a payment" onClose={onClose} busy={busy}>
+    {!customers.length ? <EmptyState title="Add a customer first" description="Payments are linked to a customer account." action={<Button onClick={onSetup}>Open customers</Button>} /> :
+      <form className="stack" onSubmit={submit}><ErrorNotice message={error} /><Select label="Customer" value={customerId} required onChange={e => setCustomerId(e.target.value)}><option value="" disabled>Choose a customer</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}{!c.active ? ' (archived)' : ''}</option>)}</Select>
+        <div className="form-note row between"><span>Current balance due</span><strong>{money(outstanding)}</strong></div>
+        <Input label="Amount received" type="number" min="0.01" step="0.01" value={amount} required onChange={e => setAmount(e.target.value)} placeholder="0.00" autoFocus />
+        <div className="form-grid"><Input label="Payment date" type="date" max={localDate()} value={date} required onChange={e => setDate(e.target.value)} /><Select label="Payment method" value={mode} onChange={e => setMode(e.target.value as PaymentMode)}>{settings.billing.paymentMethods.map(m => <option value={m} key={m}>{paymentLabels[m]}</option>)}</Select></div>
+        <Input label="Reference number" value={reference} maxLength={100} onChange={e => setReference(e.target.value)} placeholder="UPI, bank or cheque reference (optional)" />
+        <Textarea label="Notes" rows={2} value={notes} maxLength={500} onChange={e => setNotes(e.target.value)} placeholder="Optional" />
+        <p className="form-note">Applied to the oldest unpaid invoices first.{credit > 0 ? ' ' + money(credit) + ' will remain as customer credit for future invoices.' : ''}</p>
+        <div className="form-actions"><Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button><Button type="submit" busy={busy}>Save payment</Button></div>
+      </form>}
+  </Modal>;
 }

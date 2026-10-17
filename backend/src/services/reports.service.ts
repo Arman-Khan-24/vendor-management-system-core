@@ -1,568 +1,193 @@
 import { query } from '../database/connection.js';
+import { normalizeBusinessSettings } from './business-settings.service.js';
 
-export interface ReportDateFilter {
-  startDate?: string;
-  endDate?: string;
+export interface ReportDateFilter { startDate?: string; endDate?: string; }
+
+/** Timestamped events use UTC calendar dates; payments retain their selected DATE. */
+function dateConditions(column: string, params: unknown[], startDate?: string, endDate?: string, dateColumn = false): string[] {
+  const conditions: string[] = [];
+  if (startDate) {
+    params.push(startDate);
+    conditions.push(`${column} >= ${dateColumn ? `$${params.length}::date` : `($${params.length}::date::timestamp AT TIME ZONE 'UTC')`}`);
+  }
+  if (endDate) {
+    params.push(endDate);
+    conditions.push(`${column} < ${dateColumn ? `($${params.length}::date + 1)` : `(($${params.length}::date + 1)::timestamp AT TIME ZONE 'UTC')`}`);
+  }
+  return conditions;
 }
 
+const cents = (value: unknown) => Math.round(Number(value) * 100);
+
 export class ReportsService {
-  /**
-   * 1. Customer Statement with optional date range filter & opening balance
-   */
-  static async getCustomerStatement({
-    customerId,
-    businessId,
-    startDate,
-    endDate
-  }: {
-    customerId: string;
-    businessId: string;
-    startDate?: string;
-    endDate?: string;
+  static async getCustomerStatement({ customerId, businessId, startDate, endDate }: {
+    customerId: string; businessId: string; startDate?: string; endDate?: string;
   }) {
-    // 1. Verify customer exists under tenant
-    const custRes = await query(
-      `SELECT c.id, c.name, c.phone, c.credit_terms_days, b.name as business_name, b.slug as business_slug
-       FROM customers c
-       JOIN businesses b ON b.id = c.business_id
-       WHERE c.id = $1 AND c.business_id = $2`,
-      [customerId, businessId]
-    );
-    if (custRes.rows.length === 0) return null;
-    const customer = custRes.rows[0];
-
-    // 2. Compute opening balance prior to startDate if startDate is provided
-    let openingBalance = 0;
-    if (startDate) {
-      const priorBilledRes = await query(
-        `SELECT COALESCE(SUM(total), 0) AS prior_billed
-         FROM invoices
-         WHERE customer_id = $1 AND business_id = $2 AND created_at < $3::timestamptz`,
-        [customerId, businessId, startDate]
-      );
-      const priorPaidRes = await query(
-        `SELECT COALESCE(SUM(amount), 0) AS prior_paid
-         FROM payments
-         WHERE customer_id = $1 AND business_id = $2 AND created_at < $3::timestamptz`,
-        [customerId, businessId, startDate]
-      );
-      const priorBilled = parseFloat(priorBilledRes.rows[0].prior_billed);
-      const priorPaid = parseFloat(priorPaidRes.rows[0].prior_paid);
-      openingBalance = priorBilled - priorPaid;
-    }
-
-    // 3. Query ledger activity (Invoices & Payments) within range
-    const conditions = ['customer_id = $1', 'business_id = $2'];
-    const params: any[] = [customerId, businessId];
-
-    if (startDate) {
-      params.push(startDate);
-      conditions.push(`created_at >= $${params.length}::timestamptz`);
-    }
-    if (endDate) {
-      params.push(endDate);
-      conditions.push(`created_at <= $${params.length}::timestamptz`);
-    }
-
-    const whereClause = conditions.join(' AND ');
-
-    const ledgerSql = `
-      SELECT 
-        'INVOICE' AS type,
-        i.id AS reference_id,
-        CONCAT('INV-', LPAD(i.invoice_no::text, 4, '0')) AS reference_no,
-        i.created_at AS date,
-        i.total AS debit,
-        0 AS credit,
-        i.status AS status
-      FROM invoices i
-      WHERE ${whereClause}
-
+    const customers = await query(`SELECT c.id, c.name, c.phone, c.credit_terms_days, b.name AS business_name,
+      b.slug AS business_slug, b.currency, b.settings, b.phone AS business_phone
+      FROM customers c JOIN businesses b ON b.id = c.business_id WHERE c.id = $1 AND c.business_id = $2`, [customerId, businessId]);
+    const customer = customers.rows[0];
+    if (!customer) return null;
+    const settings = normalizeBusinessSettings(customer.settings);
+    const [billed, paid] = await Promise.all([
+      query(`SELECT COALESCE(SUM(total), 0) AS total,
+        COALESCE(SUM(total) FILTER (WHERE $3::date IS NOT NULL AND created_at < ($3::date::timestamp AT TIME ZONE 'UTC')), 0) AS prior
+        FROM invoices WHERE customer_id = $1 AND business_id = $2`, [customerId, businessId, startDate ?? null]),
+      query(`SELECT COALESCE(SUM(amount), 0) AS total,
+        COALESCE(SUM(amount) FILTER (WHERE $3::date IS NOT NULL AND date < $3::date), 0) AS prior
+        FROM payments WHERE customer_id = $1 AND business_id = $2`, [customerId, businessId, startDate ?? null])
+    ]);
+    const params: unknown[] = [customerId, businessId];
+    const invoiceConditions = ['i.customer_id = $1', 'i.business_id = $2', ...dateConditions('i.created_at', params, startDate, endDate)];
+    const paymentConditions = ['p.customer_id = $1', 'p.business_id = $2', ...dateConditions('p.date', params, startDate, endDate, true)];
+    const events = await query(`SELECT * FROM (
+      SELECT 'INVOICE' AS type, i.id AS reference_id,
+        CONCAT(i.invoice_prefix, '-', LPAD(i.invoice_no::text, 4, '0')) AS reference_no,
+        i.created_at AS date, i.created_at AS entered_at, i.total AS debit, 0 AS credit, i.status AS status
+      FROM invoices i WHERE ${invoiceConditions.join(' AND ')}
       UNION ALL
-
-      SELECT 
-        'PAYMENT' AS type,
-        p.id AS reference_id,
+      SELECT 'PAYMENT' AS type, p.id AS reference_id,
         COALESCE(p.reference, CONCAT('PAY-', p.mode)) AS reference_no,
-        p.created_at AS date,
-        0 AS debit,
-        p.amount AS credit,
-        p.mode AS status
-      FROM payments p
-      WHERE ${whereClause}
-
-      ORDER BY date ASC
-    `;
-
-    const ledgerRes = await query(ledgerSql, params);
-
-    let runningBalance = openingBalance;
-    const entries = ledgerRes.rows.map(row => {
-      const debit = parseFloat(row.debit);
-      const credit = parseFloat(row.credit);
-      runningBalance = runningBalance + debit - credit;
-      return {
-        type: row.type,
-        reference_id: row.reference_id,
-        reference_no: row.reference_no,
-        date: row.date,
-        debit,
-        credit,
-        running_balance: runningBalance,
-        status: row.status
-      };
+        p.date::timestamp AT TIME ZONE 'UTC' AS date, p.created_at AS entered_at, 0 AS debit, p.amount AS credit, p.mode AS status
+      FROM payments p WHERE ${paymentConditions.join(' AND ')}
+    ) ledger ORDER BY date, entered_at, reference_id`, params);
+    let runningCents = cents(billed.rows[0].prior) - cents(paid.rows[0].prior);
+    const openingBalance = runningCents / 100;
+    const entries = events.rows.map(row => {
+      runningCents += cents(row.debit) - cents(row.credit);
+      return { type: row.type, reference_id: row.reference_id, reference_no: row.reference_no, date: row.date,
+        debit: Number(row.debit), credit: Number(row.credit), running_balance: runningCents / 100, status: row.status };
     });
-
-    const periodBilled = entries.reduce((s, e) => s + e.debit, 0);
-    const periodPaid = entries.reduce((s, e) => s + e.credit, 0);
-    const closingBalance = runningBalance;
-
-    // Also get all-time outstanding balance
-    const allBilledRes = await query(
-      `SELECT COALESCE(SUM(total), 0) AS total_billed FROM invoices WHERE customer_id = $1 AND business_id = $2`,
-      [customerId, businessId]
-    );
-    const allPaidRes = await query(
-      `SELECT COALESCE(SUM(amount), 0) AS total_paid FROM payments WHERE customer_id = $1 AND business_id = $2`,
-      [customerId, businessId]
-    );
-    const totalBilledAllTime = parseFloat(allBilledRes.rows[0].total_billed);
-    const totalPaidAllTime = parseFloat(allPaidRes.rows[0].total_paid);
-    const currentOutstanding = Math.max(0, totalBilledAllTime - totalPaidAllTime);
-
+    const periodBilled = entries.reduce((sum, e) => sum + cents(e.debit), 0) / 100;
+    const periodPaid = entries.reduce((sum, e) => sum + cents(e.credit), 0) / 100;
     return {
-      business: {
-        name: customer.business_name,
-        slug: customer.business_slug
-      },
-      customer: {
-        id: customer.id,
-        name: customer.name,
-        phone: customer.phone,
-        credit_terms_days: customer.credit_terms_days
-      },
-      period: {
-        startDate,
-        endDate
-      },
-      openingBalance,
-      periodBilled,
-      periodPaid,
-      closingBalance,
-      totalBilled: periodBilled,
-      totalPaid: periodPaid,
-      currentOutstanding,
-      entries
+      business: { name: customer.business_name, slug: customer.business_slug, currency: customer.currency,
+        phone: customer.business_phone, address: settings.profile.address, footer: settings.billing.footer },
+      customer: { id: customer.id, name: customer.name, phone: customer.phone, credit_terms_days: customer.credit_terms_days },
+      period: { startDate, endDate, timezone: 'UTC' }, openingBalance, periodBilled, periodPaid,
+      closingBalance: runningCents / 100, totalBilled: periodBilled, totalPaid: periodPaid,
+      currentOutstanding: (cents(billed.rows[0].total) - cents(paid.rows[0].total)) / 100, entries
     };
   }
 
-  /**
-   * 2. Dues / Outstanding Report
-   * Includes total outstanding, overdue amount based on credit terms, customer breakdown, invoice breakdown, aging buckets
-   */
-  static async getOutstandingReport({
-    businessId,
-    asOfDate
-  }: {
-    businessId: string;
-    asOfDate?: string;
-  }) {
-    // 1. Invoice-level outstanding calculation
-    // A single invoice's outstanding amount = total - SUM(allocations)
-    const invoiceSql = `
-      SELECT 
-        i.id,
-        CONCAT('INV-', LPAD(i.invoice_no::text, 4, '0')) AS invoice_no,
-        i.order_id,
-        i.customer_id,
-        c.name AS customer_name,
-        c.phone AS customer_phone,
-        c.credit_terms_days,
-        i.created_at AS invoice_date,
-        (i.created_at + (c.credit_terms_days || ' days')::interval) AS due_date,
-        i.total,
-        COALESCE(SUM(pa.amount), 0) AS allocated_amount,
-        (i.total - COALESCE(SUM(pa.amount), 0)) AS outstanding_amount,
-        EXTRACT(DAY FROM (NOW() - (i.created_at + (c.credit_terms_days || ' days')::interval))) AS days_overdue,
-        i.status
-      FROM invoices i
-      JOIN customers c ON c.id = i.customer_id AND c.business_id = i.business_id
-      LEFT JOIN payment_allocations pa ON pa.invoice_id = i.id AND pa.business_id = i.business_id
-      WHERE i.business_id = $1
-      GROUP BY i.id, i.invoice_no, i.order_id, i.customer_id, c.name, c.phone, c.credit_terms_days, i.created_at, i.total, i.status
-      HAVING (i.total - COALESCE(SUM(pa.amount), 0)) > 0.0001
-      ORDER BY i.created_at ASC
-    `;
-    const invoiceRes = await query(invoiceSql, [businessId]);
-
-    let totalOutstanding = 0;
-    let totalOverdue = 0;
-
-    const agingBuckets = {
-      current: 0,       // not yet due
-      overdue_1_7: 0,   // 1 to 7 days overdue
-      overdue_8_15: 0,  // 8 to 15 days overdue
-      overdue_16_30: 0, // 16 to 30 days overdue
-      overdue_30_plus: 0 // > 30 days overdue
-    };
-
-    const customerMap = new Map<string, {
-      customerId: string;
-      customerName: string;
-      customerPhone: string;
-      creditTermsDays: number;
-      totalOutstanding: number;
-      totalOverdue: number;
-      oldestInvoiceDate: string;
-      invoiceCount: number;
-    }>();
-
-    const invoiceList = invoiceRes.rows.map(r => {
-      const total = parseFloat(r.total);
-      const allocated = parseFloat(r.allocated_amount);
-      const outstanding = parseFloat(r.outstanding_amount);
-      const daysOverdue = Math.max(0, Math.floor(parseFloat(r.days_overdue || '0')));
+  static async getOutstandingReport({ businessId, asOfDate = new Date().toISOString().slice(0, 10) }: { businessId: string; asOfDate?: string }) {
+    const result = await query(`SELECT i.id, CONCAT(i.invoice_prefix, '-', LPAD(i.invoice_no::text, 4, '0')) AS invoice_no,
+      i.order_id, i.customer_id, c.name AS customer_name, c.phone AS customer_phone, i.credit_terms_days,
+      i.created_at AS invoice_date, ((i.created_at AT TIME ZONE 'UTC')::date + i.credit_terms_days)::text AS due_date,
+      i.total, paid.allocated AS allocated_amount, i.total - paid.allocated AS outstanding_amount,
+      $2::date - ((i.created_at AT TIME ZONE 'UTC')::date + i.credit_terms_days) AS days_overdue,
+      CASE WHEN paid.allocated >= i.total THEN 'Paid' WHEN paid.allocated > 0 THEN 'Partial' ELSE 'Pending' END AS status
+      FROM invoices i JOIN customers c ON c.id = i.customer_id AND c.business_id = i.business_id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(pa.amount), 0) AS allocated FROM payment_allocations pa
+        JOIN payments p ON p.id = pa.payment_id AND p.business_id = pa.business_id
+        WHERE pa.invoice_id = i.id AND pa.business_id = i.business_id AND p.date <= $2::date
+      ) paid ON TRUE
+      WHERE i.business_id = $1 AND i.created_at < (($2::date + 1)::timestamp AT TIME ZONE 'UTC')
+        AND i.total - paid.allocated > 0
+      ORDER BY i.created_at, i.invoice_no`, [businessId, asOfDate]);
+    let totalOutstandingCents = 0;
+    let totalOverdueCents = 0;
+    const agingBuckets = { current: 0, overdue_1_7: 0, overdue_8_15: 0, overdue_16_30: 0, overdue_30_plus: 0 };
+    const customerMap = new Map<string, { customerId: string; customerName: string; customerPhone: string; creditTermsDays: number;
+      totalOutstanding: number; totalOverdue: number; oldestInvoiceDate: string; invoiceCount: number }>();
+    const invoices = result.rows.map(row => {
+      const outstandingCents = cents(row.outstanding_amount);
+      const outstanding = outstandingCents / 100;
+      const daysOverdue = Math.max(0, Number(row.days_overdue));
       const isOverdue = daysOverdue > 0;
-
-      totalOutstanding += outstanding;
-      if (isOverdue) {
-        totalOverdue += outstanding;
-      }
-
-      // Aging
-      if (!isOverdue) {
-        agingBuckets.current += outstanding;
-      } else if (daysOverdue <= 7) {
-        agingBuckets.overdue_1_7 += outstanding;
-      } else if (daysOverdue <= 15) {
-        agingBuckets.overdue_8_15 += outstanding;
-      } else if (daysOverdue <= 30) {
-        agingBuckets.overdue_16_30 += outstanding;
-      } else {
-        agingBuckets.overdue_30_plus += outstanding;
-      }
-
-      // Customer rollup
-      if (!customerMap.has(r.customer_id)) {
-        customerMap.set(r.customer_id, {
-          customerId: r.customer_id,
-          customerName: r.customer_name,
-          customerPhone: r.customer_phone,
-          creditTermsDays: r.credit_terms_days,
-          totalOutstanding: 0,
-          totalOverdue: 0,
-          oldestInvoiceDate: r.invoice_date,
-          invoiceCount: 0
-        });
-      }
-
-      const cData = customerMap.get(r.customer_id)!;
-      cData.totalOutstanding += outstanding;
-      cData.invoiceCount += 1;
-      if (isOverdue) cData.totalOverdue += outstanding;
-
-      return {
-        id: r.id,
-        invoiceNo: r.invoice_no,
-        customerId: r.customer_id,
-        customerName: r.customer_name,
-        customerPhone: r.customer_phone,
-        creditTermsDays: r.credit_terms_days,
-        invoiceDate: r.invoice_date,
-        dueDate: r.due_date,
-        total,
-        allocatedAmount: allocated,
-        outstandingAmount: outstanding,
-        daysOverdue,
-        isOverdue,
-        status: r.status
-      };
+      totalOutstandingCents += outstandingCents;
+      if (isOverdue) totalOverdueCents += outstandingCents;
+      const bucket = !isOverdue ? 'current' : daysOverdue <= 7 ? 'overdue_1_7' : daysOverdue <= 15 ? 'overdue_8_15' : daysOverdue <= 30 ? 'overdue_16_30' : 'overdue_30_plus';
+      agingBuckets[bucket] = (cents(agingBuckets[bucket]) + outstandingCents) / 100;
+      const summary = customerMap.get(row.customer_id) ?? { customerId: row.customer_id, customerName: row.customer_name,
+        customerPhone: row.customer_phone, creditTermsDays: row.credit_terms_days, totalOutstanding: 0, totalOverdue: 0,
+        oldestInvoiceDate: row.invoice_date, invoiceCount: 0 };
+      summary.totalOutstanding = (cents(summary.totalOutstanding) + outstandingCents) / 100;
+      if (isOverdue) summary.totalOverdue = (cents(summary.totalOverdue) + outstandingCents) / 100;
+      summary.invoiceCount += 1;
+      customerMap.set(row.customer_id, summary);
+      return { id: row.id, invoiceNo: row.invoice_no, customerId: row.customer_id, customerName: row.customer_name,
+        customerPhone: row.customer_phone, creditTermsDays: row.credit_terms_days, invoiceDate: row.invoice_date, dueDate: row.due_date,
+        total: Number(row.total), allocatedAmount: Number(row.allocated_amount), outstandingAmount: outstanding, daysOverdue, isOverdue, status: row.status };
     });
-
-    const customerSummary = Array.from(customerMap.values())
-      .sort((a, b) => b.totalOutstanding - a.totalOutstanding);
-
-    return {
-      totalOutstanding,
-      totalOverdue,
-      agingBuckets,
-      customerCountWithDues: customerSummary.length,
-      unpaidInvoiceCount: invoiceList.length,
-      customers: customerSummary,
-      invoices: invoiceList
-    };
+    const customers = [...customerMap.values()].sort((a, b) => b.totalOutstanding - a.totalOutstanding);
+    return { asOfDate, totalOutstanding: totalOutstandingCents / 100, totalOverdue: totalOverdueCents / 100, agingBuckets,
+      customerCountWithDues: customers.length, unpaidInvoiceCount: invoices.length, customers, invoices };
   }
 
-  /**
-   * 3. Sales Report with date range & period aggregation (daily/weekly/monthly)
-   */
-  static async getSalesReport({
-    businessId,
-    startDate,
-    endDate,
-    interval = 'day'
-  }: {
-    businessId: string;
-    startDate?: string;
-    endDate?: string;
-    interval?: 'day' | 'week' | 'month';
+  static async getSalesReport({ businessId, startDate, endDate, interval = 'day' }: {
+    businessId: string; startDate?: string; endDate?: string; interval?: 'day' | 'week' | 'month';
   }) {
     const validInterval = ['day', 'week', 'month'].includes(interval) ? interval : 'day';
-
-    const conditions = ['o.business_id = $1'];
-    const params: any[] = [businessId];
-
-    if (startDate) {
-      params.push(startDate);
-      conditions.push(`o.created_at >= $${params.length}::timestamptz`);
-    }
-    if (endDate) {
-      params.push(endDate);
-      conditions.push(`o.created_at <= $${params.length}::timestamptz`);
-    }
-
-    const whereClause = conditions.join(' AND ');
-
-    // 1. Totals across period
-    const totalSql = `
-      SELECT 
-        COUNT(DISTINCT o.id) AS total_orders,
-        COALESCE(SUM(oi.quantity * oi.unit_price_at_order), 0) AS total_sales,
-        COUNT(DISTINCT i.id) AS total_invoices
-      FROM orders o
-      LEFT JOIN order_items oi ON oi.order_id = o.id AND oi.business_id = o.business_id
-      LEFT JOIN invoices i ON i.order_id = o.id AND i.business_id = o.business_id
-      WHERE ${whereClause}
-    `;
-    const totalRes = await query(totalSql, params);
-
-    // 2. Timeline Aggregation
-    const seriesSql = `
-      SELECT 
-        DATE_TRUNC('${validInterval}', o.created_at) AS period,
-        COUNT(DISTINCT o.id) AS order_count,
-        COALESCE(SUM(oi.quantity * oi.unit_price_at_order), 0) AS sales_amount
-      FROM orders o
-      LEFT JOIN order_items oi ON oi.order_id = o.id AND oi.business_id = o.business_id
-      WHERE ${whereClause}
-      GROUP BY DATE_TRUNC('${validInterval}', o.created_at)
-      ORDER BY period ASC
-    `;
-    const seriesRes = await query(seriesSql, params);
-
-    return {
-      totalSales: parseFloat(totalRes.rows[0].total_sales),
-      totalOrders: parseInt(totalRes.rows[0].total_orders, 10),
-      totalInvoices: parseInt(totalRes.rows[0].total_invoices, 10),
-      interval: validInterval,
-      series: seriesRes.rows.map(r => ({
-        period: r.period,
-        orderCount: parseInt(r.order_count, 10),
-        salesAmount: parseFloat(r.sales_amount)
-      }))
-    };
+    const params: unknown[] = [businessId];
+    const conditions = ['o.business_id = $1', ...dateConditions('o.created_at', params, startDate, endDate)];
+    const orders = `SELECT o.id, o.created_at, i.id AS invoice_id,
+      lines.subtotal + ROUND(lines.subtotal * o.tax_rate / 100, 2) AS total
+      FROM orders o LEFT JOIN invoices i ON i.order_id = o.id AND i.business_id = o.business_id
+      LEFT JOIN LATERAL (SELECT COALESCE(SUM(oi.total_price), 0) AS subtotal FROM order_items oi
+        WHERE oi.order_id = o.id AND oi.business_id = o.business_id) lines ON TRUE WHERE ${conditions.join(' AND ')}`;
+    const [totals, series] = await Promise.all([
+      query(`SELECT COUNT(*) AS total_orders, COUNT(invoice_id) AS total_invoices, COALESCE(SUM(total), 0) AS total_sales FROM (${orders}) filtered`, params),
+      query(`SELECT DATE_TRUNC('${validInterval}', created_at AT TIME ZONE 'UTC')::date::text AS period,
+        COUNT(*) AS order_count, SUM(total) AS sales_amount FROM (${orders}) filtered GROUP BY period ORDER BY period`, params)
+    ]);
+    return { totalSales: Number(totals.rows[0].total_sales), totalOrders: Number(totals.rows[0].total_orders),
+      totalInvoices: Number(totals.rows[0].total_invoices), interval: validInterval,
+      series: series.rows.map(row => ({ period: row.period, orderCount: Number(row.order_count), salesAmount: Number(row.sales_amount) })) };
   }
 
-  /**
-   * 4. Collection Report with payment mode breakdown & aggregation
-   */
-  static async getCollectionReport({
-    businessId,
-    startDate,
-    endDate,
-    interval = 'day'
-  }: {
-    businessId: string;
-    startDate?: string;
-    endDate?: string;
-    interval?: 'day' | 'week' | 'month';
+  static async getCollectionReport({ businessId, startDate, endDate, interval = 'day' }: {
+    businessId: string; startDate?: string; endDate?: string; interval?: 'day' | 'week' | 'month';
   }) {
     const validInterval = ['day', 'week', 'month'].includes(interval) ? interval : 'day';
-
-    const conditions = ['p.business_id = $1'];
-    const params: any[] = [businessId];
-
-    if (startDate) {
-      params.push(startDate);
-      conditions.push(`p.created_at >= $${params.length}::timestamptz`);
-    }
-    if (endDate) {
-      params.push(endDate);
-      conditions.push(`p.created_at <= $${params.length}::timestamptz`);
-    }
-
-    const whereClause = conditions.join(' AND ');
-
-    // 1. Overall Totals
-    const totalSql = `
-      SELECT 
-        COUNT(p.id) AS payment_count,
-        COALESCE(SUM(p.amount), 0) AS total_collected
-      FROM payments p
-      WHERE ${whereClause}
-    `;
-    const totalRes = await query(totalSql, params);
-
-    // 2. Mode Breakdown
-    const modeSql = `
-      SELECT 
-        p.mode,
-        COUNT(p.id) AS count,
-        COALESCE(SUM(p.amount), 0) AS amount
-      FROM payments p
-      WHERE ${whereClause}
-      GROUP BY p.mode
-      ORDER BY amount DESC
-    `;
-    const modeRes = await query(modeSql, params);
-
-    // 3. Time Series
-    const seriesSql = `
-      SELECT 
-        DATE_TRUNC('${validInterval}', p.created_at) AS period,
-        COUNT(p.id) AS payment_count,
-        COALESCE(SUM(p.amount), 0) AS collected_amount
-      FROM payments p
-      WHERE ${whereClause}
-      GROUP BY DATE_TRUNC('${validInterval}', p.created_at)
-      ORDER BY period ASC
-    `;
-    const seriesRes = await query(seriesSql, params);
-
-    return {
-      totalCollected: parseFloat(totalRes.rows[0].total_collected),
-      paymentCount: parseInt(totalRes.rows[0].payment_count, 10),
-      modeBreakdown: modeRes.rows.map(r => ({
-        mode: r.mode,
-        count: parseInt(r.count, 10),
-        amount: parseFloat(r.amount)
-      })),
-      series: seriesRes.rows.map(r => ({
-        period: r.period,
-        paymentCount: parseInt(r.payment_count, 10),
-        collectedAmount: parseFloat(r.collected_amount)
-      }))
-    };
+    const params: unknown[] = [businessId];
+    const conditions = ['p.business_id = $1', ...dateConditions('p.date', params, startDate, endDate, true)].join(' AND ');
+    const [totals, modes, series] = await Promise.all([
+      query(`SELECT COUNT(*) AS payment_count, COALESCE(SUM(p.amount), 0) AS total_collected FROM payments p WHERE ${conditions}`, params),
+      query(`SELECT p.mode, COUNT(*) AS count, SUM(p.amount) AS amount FROM payments p WHERE ${conditions} GROUP BY p.mode ORDER BY amount DESC`, params),
+      query(`SELECT DATE_TRUNC('${validInterval}', p.date::timestamp)::date::text AS period, COUNT(*) AS payment_count,
+        SUM(p.amount) AS collected_amount FROM payments p WHERE ${conditions} GROUP BY period ORDER BY period`, params)
+    ]);
+    return { totalCollected: Number(totals.rows[0].total_collected), paymentCount: Number(totals.rows[0].payment_count),
+      modeBreakdown: modes.rows.map(row => ({ mode: row.mode, count: Number(row.count), amount: Number(row.amount) })),
+      series: series.rows.map(row => ({ period: row.period, paymentCount: Number(row.payment_count), collectedAmount: Number(row.collected_amount) })) };
   }
 
-  /**
-   * 5. Top Customers Ranked by sales, order count, amount paid, outstanding
-   */
-  static async getTopCustomers({
-    businessId,
-    limit = 10,
-    startDate,
-    endDate
-  }: {
-    businessId: string;
-    limit?: number;
-    startDate?: string;
-    endDate?: string;
+  static async getTopCustomers({ businessId, limit = 10, startDate, endDate }: {
+    businessId: string; limit?: number; startDate?: string; endDate?: string;
   }) {
-    const params: any[] = [businessId, limit];
-    let dateFilter = '';
-
-    if (startDate && endDate) {
-      params.push(startDate, endDate);
-      dateFilter = `AND o.created_at BETWEEN $3::timestamptz AND $4::timestamptz`;
-    }
-
-    const sql = `
-      SELECT 
-        c.id,
-        c.name,
-        c.phone,
-        COUNT(DISTINCT o.id) AS order_count,
-        COALESCE(SUM(oi.quantity * oi.unit_price_at_order), 0) AS total_sales,
-        COALESCE((
-          SELECT SUM(p.amount) 
-          FROM payments p 
-          WHERE p.customer_id = c.id AND p.business_id = c.business_id
-        ), 0) AS total_paid,
-        COALESCE((
-          SELECT SUM(i.total) 
-          FROM invoices i 
-          WHERE i.customer_id = c.id AND i.business_id = c.business_id
-        ), 0) AS total_invoiced
-      FROM customers c
-      LEFT JOIN orders o ON o.customer_id = c.id AND o.business_id = c.business_id ${dateFilter}
-      LEFT JOIN order_items oi ON oi.order_id = o.id AND oi.business_id = o.business_id
-      WHERE c.business_id = $1
-      GROUP BY c.id, c.name, c.phone
-      ORDER BY total_sales DESC
-      LIMIT $2
-    `;
-
-    const res = await query(sql, params);
-
-    return res.rows.map(r => {
-      const sales = parseFloat(r.total_sales);
-      const paid = parseFloat(r.total_paid);
-      const invoiced = parseFloat(r.total_invoiced);
-      const outstanding = Math.max(0, invoiced - paid);
-
-      return {
-        id: r.id,
-        name: r.name,
-        phone: r.phone,
-        orderCount: parseInt(r.order_count, 10),
-        totalSales: sales,
-        totalPaid: paid,
-        outstandingBalance: outstanding
-      };
-    });
+    const params: unknown[] = [businessId, limit];
+    const orderFilter = dateConditions('o.created_at', params, startDate, endDate);
+    const paymentFilter = dateConditions('p.date', params, startDate, endDate, true);
+    const result = await query(`SELECT c.id, c.name, c.phone, sales.order_count, sales.total_sales,
+      COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.customer_id = c.id AND p.business_id = c.business_id
+        ${paymentFilter.length ? 'AND ' + paymentFilter.join(' AND ') : ''}), 0) AS total_paid,
+      COALESCE((SELECT SUM(i.total) FROM invoices i WHERE i.customer_id = c.id AND i.business_id = c.business_id), 0) -
+      COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.customer_id = c.id AND p.business_id = c.business_id), 0) AS outstanding
+      FROM customers c LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS order_count, COALESCE(SUM(lines.subtotal + ROUND(lines.subtotal * o.tax_rate / 100, 2)), 0) AS total_sales
+        FROM orders o LEFT JOIN LATERAL (SELECT COALESCE(SUM(oi.total_price), 0) AS subtotal FROM order_items oi
+          WHERE oi.order_id = o.id AND oi.business_id = o.business_id) lines ON TRUE
+        WHERE o.customer_id = c.id AND o.business_id = c.business_id ${orderFilter.length ? 'AND ' + orderFilter.join(' AND ') : ''}
+      ) sales ON TRUE WHERE c.business_id = $1 ORDER BY total_sales DESC, c.id LIMIT $2`, params);
+    return result.rows.map(row => ({ id: row.id, name: row.name, phone: row.phone, orderCount: Number(row.order_count),
+      totalSales: Number(row.total_sales), totalPaid: Number(row.total_paid), outstandingBalance: Number(row.outstanding) }));
   }
 
-  /**
-   * 6. Top Products Ranked by quantity sold and revenue
-   */
-  static async getTopProducts({
-    businessId,
-    limit = 10,
-    startDate,
-    endDate
-  }: {
-    businessId: string;
-    limit?: number;
-    startDate?: string;
-    endDate?: string;
+  static async getTopProducts({ businessId, limit = 10, startDate, endDate }: {
+    businessId: string; limit?: number; startDate?: string; endDate?: string;
   }) {
-    const params: any[] = [businessId, limit];
-    let dateFilter = '';
-
-    if (startDate && endDate) {
-      params.push(startDate, endDate);
-      dateFilter = `AND o.created_at BETWEEN $3::timestamptz AND $4::timestamptz`;
-    }
-
-    const sql = `
-      SELECT 
-        p.id,
-        p.name,
-        p.unit,
-        p.current_price,
-        COUNT(DISTINCT oi.order_id) AS order_frequency,
-        COALESCE(SUM(oi.quantity), 0) AS total_quantity_sold,
-        COALESCE(SUM(oi.quantity * oi.unit_price_at_order), 0) AS total_revenue
-      FROM products p
-      LEFT JOIN order_items oi ON oi.product_id = p.id AND oi.business_id = p.business_id
-      LEFT JOIN orders o ON o.id = oi.order_id AND o.business_id = p.business_id ${dateFilter}
-      WHERE p.business_id = $1
-      GROUP BY p.id, p.name, p.unit, p.current_price
-      ORDER BY total_revenue DESC, total_quantity_sold DESC
-      LIMIT $2
-    `;
-
-    const res = await query(sql, params);
-
-    return res.rows.map(r => ({
-      id: r.id,
-      name: r.name,
-      unit: r.unit,
-      currentPrice: parseFloat(r.current_price),
-      orderFrequency: parseInt(r.order_frequency, 10),
-      totalQuantitySold: parseFloat(r.total_quantity_sold),
-      totalRevenue: parseFloat(r.total_revenue)
-    }));
+    const params: unknown[] = [businessId, limit];
+    const filter = dateConditions('o.created_at', params, startDate, endDate);
+    const result = await query(`SELECT p.id, p.name, p.unit, p.current_price, sold.order_frequency,
+      sold.total_quantity_sold, sold.total_revenue FROM products p LEFT JOIN LATERAL (
+        SELECT COUNT(DISTINCT oi.order_id) AS order_frequency, COALESCE(SUM(oi.quantity), 0) AS total_quantity_sold,
+          COALESCE(SUM(oi.total_price), 0) AS total_revenue FROM order_items oi
+        JOIN orders o ON o.id = oi.order_id AND o.business_id = oi.business_id
+        WHERE oi.product_id = p.id AND oi.business_id = p.business_id ${filter.length ? 'AND ' + filter.join(' AND ') : ''}
+      ) sold ON TRUE WHERE p.business_id = $1 ORDER BY total_revenue DESC, total_quantity_sold DESC, p.id LIMIT $2`, params);
+    return result.rows.map(row => ({ id: row.id, name: row.name, unit: row.unit, currentPrice: Number(row.current_price),
+      orderFrequency: Number(row.order_frequency), totalQuantitySold: Number(row.total_quantity_sold), totalRevenue: Number(row.total_revenue) }));
   }
 }

@@ -1,22 +1,19 @@
+import PDFDocument from 'pdfkit';
+import { fileURLToPath } from 'node:url';
+
 export interface BusinessBrandInfo {
   name: string;
   slug: string;
   phone?: string;
   address?: string;
+  currency?: string;
+  footer?: string;
 }
 
 export interface StatementPdfData {
   business: BusinessBrandInfo;
-  customer: {
-    id: string;
-    name: string;
-    phone: string;
-    credit_terms_days: number;
-  };
-  period: {
-    startDate?: string;
-    endDate?: string;
-  };
+  customer: { id: string; name: string; phone: string; credit_terms_days: number };
+  period: { startDate?: string; endDate?: string };
   openingBalance: number;
   closingBalance: number;
   totalBilled: number;
@@ -33,367 +30,165 @@ export interface StatementPdfData {
   }>;
 }
 
+const fontPath = fileURLToPath(new URL('../assets/fonts/NotoSansDevanagari.ttf', import.meta.url));
+const colors = { ink: '#273329', muted: '#63715F', accent: '#597451', soft: '#EDF2E9', border: '#D8E1D5', row: '#F7F9F5' };
+const compact = (value: string | undefined) => (value ?? '').replace(/\s+/g, ' ').trim();
+
 export class PdfService {
-  private static browserPromise: Promise<any> | null = null;
-
-  private static async getBrowser(): Promise<any> {
-    if (!this.browserPromise) {
-      try {
-        const modName = 'puppeteer';
-        const puppeteer: any = await import(modName);
-        const launcher = puppeteer.default || puppeteer;
-        this.browserPromise = launcher.launch({
-          headless: true,
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu'
-          ]
-        });
-      } catch (err: any) {
-        throw new Error('Puppeteer is not installed in this environment: ' + err.message);
-      }
-    }
-    return this.browserPromise;
-  }
-
-  static generateStatementHtml(data: StatementPdfData): string {
-    const formatInr = (n: number) => {
-      return new Intl.NumberFormat('en-IN', {
-        style: 'currency',
-        currency: 'INR',
-        maximumFractionDigits: 2
-      }).format(n || 0);
-    };
-
-    const formatDate = (d: string | Date) => {
-      const dt = new Date(d);
-      return dt.toLocaleDateString('en-IN', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric'
-      });
-    };
-
-    const periodStr = data.period.startDate && data.period.endDate
-      ? `${formatDate(data.period.startDate)} — ${formatDate(data.period.endDate)}`
-      : 'All-Time Account History';
-
-    const rowsHtml = data.entries.map((entry, idx) => {
-      const isInvoice = entry.type === 'INVOICE';
-      const badgeClass = isInvoice ? 'badge-invoice' : 'badge-payment';
-      const debitStr = entry.debit > 0 ? formatInr(entry.debit) : '—';
-      const creditStr = entry.credit > 0 ? formatInr(entry.credit) : '—';
-      const rowBg = idx % 2 === 0 ? '#FFFFFF' : '#F8FAFC';
-
-      return `
-        <tr style="background-color: ${rowBg};">
-          <td style="padding: 10px 14px; font-size: 11px; color: #64748B;">${formatDate(entry.date)}</td>
-          <td style="padding: 10px 14px; font-size: 11px; font-weight: 700; color: #0F172A;">
-            <span class="${badgeClass}">${entry.type}</span>
-            <span style="margin-left: 6px;">${entry.reference_no}</span>
-          </td>
-          <td style="padding: 10px 14px; font-size: 11px; text-align: right; color: #0F172A; font-weight: 600;">${debitStr}</td>
-          <td style="padding: 10px 14px; font-size: 11px; text-align: right; color: #059669; font-weight: 600;">${creditStr}</td>
-          <td style="padding: 10px 14px; font-size: 11px; text-align: right; font-weight: 800; color: #0F172A;">${formatInr(entry.running_balance)}</td>
-        </tr>
-      `;
-    }).join('');
-
-    return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Statement - ${data.customer.name}</title>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-    
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-    body {
-      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      color: #0F172A;
-      background-color: #FFFFFF;
-      padding: 32px 36px;
-      -webkit-font-smoothing: antialiased;
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      padding-bottom: 24px;
-      border-bottom: 2px solid #E2E8F0;
-    }
-    .brand-title {
-      font-size: 24px;
-      font-weight: 800;
-      letter-spacing: -0.5px;
-      color: #0F172A;
-    }
-    .brand-sub {
-      font-size: 11px;
-      color: #64748B;
-      margin-top: 4px;
-      font-weight: 500;
-    }
-    .doc-title-block {
-      text-align: right;
-    }
-    .doc-title {
-      font-size: 18px;
-      font-weight: 800;
-      color: #059669;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .period-label {
-      font-size: 11px;
-      color: #64748B;
-      margin-top: 4px;
-      font-weight: 600;
-    }
-    .parties-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
-      margin-top: 24px;
-    }
-    .info-card {
-      background-color: #F8FAFC;
-      border: 1px solid #E2E8F0;
-      border-radius: 14px;
-      padding: 16px 20px;
-    }
-    .info-label {
-      font-size: 10px;
-      text-transform: uppercase;
-      font-weight: 800;
-      letter-spacing: 0.6px;
-      color: #64748B;
-      margin-bottom: 6px;
-    }
-    .customer-name {
-      font-size: 15px;
-      font-weight: 800;
-      color: #0F172A;
-    }
-    .customer-detail {
-      font-size: 12px;
-      color: #475569;
-      margin-top: 4px;
-    }
-    .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-      margin-top: 24px;
-    }
-    .kpi-card {
-      border-radius: 12px;
-      padding: 14px;
-      text-align: center;
-      border: 1px solid #E2E8F0;
-      background: #FFFFFF;
-    }
-    .kpi-card.highlight {
-      background: #FEF3C7;
-      border-color: #FDE68A;
-    }
-    .kpi-card-label {
-      font-size: 9px;
-      text-transform: uppercase;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      color: #64748B;
-    }
-    .kpi-card-value {
-      font-size: 16px;
-      font-weight: 800;
-      color: #0F172A;
-      margin-top: 4px;
-    }
-    .kpi-card.highlight .kpi-card-value {
-      color: #B45309;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 28px;
-      border: 1px solid #E2E8F0;
-      border-radius: 12px;
-      overflow: hidden;
-    }
-    thead {
-      background-color: #F1F5F9;
-    }
-    th {
-      padding: 12px 14px;
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      font-weight: 700;
-      color: #475569;
-      border-bottom: 2px solid #CBD5E1;
-    }
-    th.text-right {
-      text-align: right;
-    }
-    th.text-left {
-      text-align: left;
-    }
-    .badge-invoice {
-      display: inline-block;
-      padding: 2px 7px;
-      font-size: 9px;
-      font-weight: 700;
-      border-radius: 999px;
-      background-color: #E2E8F0;
-      color: #334155;
-    }
-    .badge-payment {
-      display: inline-block;
-      padding: 2px 7px;
-      font-size: 9px;
-      font-weight: 700;
-      border-radius: 999px;
-      background-color: #D1FAE5;
-      color: #065F46;
-    }
-    .footer {
-      margin-top: 36px;
-      padding-top: 18px;
-      border-top: 1px solid #E2E8F0;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 10px;
-      color: #94A3B8;
-    }
-    .watermark {
-      font-size: 10px;
-      font-weight: 600;
-      color: #64748B;
-    }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <div>
-      <div class="brand-title">${escapeHtml(data.business.name)}</div>
-      <div class="brand-sub">B2B Wholesale Ledger Statement · Ref: ${data.business.slug}</div>
-    </div>
-    <div class="doc-title-block">
-      <div class="doc-title">Statement of Account</div>
-      <div class="period-label">${periodStr}</div>
-    </div>
-  </div>
-
-  <div class="parties-grid">
-    <div class="info-card">
-      <div class="info-label">Customer Details</div>
-      <div class="customer-name">${escapeHtml(data.customer.name)}</div>
-      <div class="customer-detail">Phone: <strong>${escapeHtml(data.customer.phone)}</strong></div>
-      <div class="customer-detail">Credit Terms: <strong>${data.customer.credit_terms_days} Days</strong></div>
-    </div>
-    <div class="info-card">
-      <div class="info-label">Statement Summary</div>
-      <div class="customer-detail">Generated: <strong>${new Date().toLocaleString('en-IN')}</strong></div>
-      <div class="customer-detail">Total Invoices & Payments: <strong>${data.entries.length} items</strong></div>
-      <div class="customer-detail">Settlement Status: <strong>${data.currentOutstanding <= 0 ? 'Fully Paid' : 'Balance Pending'}</strong></div>
-    </div>
-  </div>
-
-  <div class="kpi-grid">
-    <div class="kpi-card">
-      <div class="kpi-card-label">Opening Balance</div>
-      <div class="kpi-card-value">${formatInr(data.openingBalance)}</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-card-label">Total Invoiced</div>
-      <div class="kpi-card-value">${formatInr(data.totalBilled)}</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-card-label">Total Paid</div>
-      <div class="kpi-card-value" style="color: #059669;">${formatInr(data.totalPaid)}</div>
-    </div>
-    <div class="kpi-card highlight">
-      <div class="kpi-card-label">Closing Outstanding</div>
-      <div class="kpi-card-value">${formatInr(data.currentOutstanding)}</div>
-    </div>
-  </div>
-
-  <table>
-    <thead>
-      <tr>
-        <th class="text-left" style="width: 16%;">Date</th>
-        <th class="text-left" style="width: 32%;">Reference / Activity</th>
-        <th class="text-right" style="width: 17%;">Debit (₹)</th>
-        <th class="text-right" style="width: 17%;">Credit (₹)</th>
-        <th class="text-right" style="width: 18%;">Balance (₹)</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${data.openingBalance !== 0 ? `
-        <tr style="background-color: #F8FAFC; font-weight: 700;">
-          <td style="padding: 10px 14px; font-size: 11px; color: #64748B;">Prior</td>
-          <td style="padding: 10px 14px; font-size: 11px; color: #0F172A;" colspan="3">Opening Balance Carried Forward</td>
-          <td style="padding: 10px 14px; font-size: 11px; text-align: right; font-weight: 800;">${formatInr(data.openingBalance)}</td>
-        </tr>
-      ` : ''}
-      ${rowsHtml || `
-        <tr>
-          <td colspan="5" style="padding: 24px; text-align: center; color: #94A3B8; font-size: 12px;">
-            No transactions found for this statement period.
-          </td>
-        </tr>
-      `}
-    </tbody>
-  </table>
-
-  <div class="footer">
-    <div class="watermark">OrderLedger Multi-Tenant Cloud Platform</div>
-    <div>Page 1 of 1 · Computer-generated authentic ledger statement</div>
-  </div>
-</body>
-</html>
-    `;
-  }
-
   static async generateStatementPdf(data: StatementPdfData): Promise<Buffer> {
-    const html = this.generateStatementHtml(data);
-    const browser = await this.getBrowser();
-    const page = await browser.newPage();
+    const currency = data.business.currency || 'INR';
+    const numbers = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const amount = (value: number) => {
+      if (!Number.isFinite(Number(value))) throw new Error('Statement contains an invalid amount');
+      return `${currency} ${numbers.format(Number(value))}`;
+    };
+    const date = (value: string | Date) => new Intl.DateTimeFormat('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC'
+    }).format(new Date(value));
+    const period = data.period.startDate && data.period.endDate
+      ? `${date(data.period.startDate)} to ${date(data.period.endDate)}`
+      : data.period.startDate ? `From ${date(data.period.startDate)}`
+        : data.period.endDate ? `Through ${date(data.period.endDate)}` : 'All account history';
 
-    try {
-      await page.setContent(html, { waitUntil: 'domcontentloaded' });
-      const pdfUint8Array = await page.pdf({
-        format: 'A4',
-        printBackground: true,
-        margin: {
-          top: '15mm',
-          right: '15mm',
-          bottom: '15mm',
-          left: '15mm'
-        }
+    return new Promise<Buffer>((resolve, reject) => {
+      const doc = new PDFDocument({
+        size: 'A4', margin: 40, bufferPages: true,
+        info: { Title: `Statement - ${data.customer.name}`, Author: data.business.name, Creator: data.business.name, Subject: `${currency} account statement: ${period}` }
       });
-      return Buffer.from(pdfUint8Array);
-    } finally {
-      await page.close();
-    }
-  }
-}
+      const chunks: Buffer[] = [];
+      doc.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
 
-function escapeHtml(str: string): string {
-  if (!str) return '';
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+      try {
+        doc.registerFont('Statement', fontPath);
+        doc.font('Statement');
+        const margin = 40;
+        const width = doc.page.width - margin * 2;
+        const bottom = () => doc.page.height - 70;
+        const text = (value: string, x: number, y: number, textWidth: number, size = 9, color = colors.ink, align: 'left' | 'right' = 'left') => {
+          if (!value) return 0;
+          doc.font('Statement').fontSize(size).fillColor(color);
+          const options = { width: textWidth, align, lineGap: 2 };
+          const height = doc.heightOfString(value, options);
+          doc.text(value, x, y, options);
+          return height;
+        };
+        const header = (continued = false) => {
+          doc.roundedRect(margin, 40, 4, 23, 2).fill(colors.accent);
+          let y = 39;
+          const nameHeight = text(compact(data.business.name), margin + 13, y, width - 170, continued ? 13 : 19);
+          text('STATEMENT OF ACCOUNT', margin + width - 154, y + 4, 154, 8.5, colors.accent, 'right');
+          y += Math.max(27, nameHeight) + 8;
+          if (continued) {
+            y += text(`${compact(data.customer.name)} | ${period}`, margin, y, width, 8.5, colors.muted);
+            return y + 16;
+          }
+          const contact = [compact(data.business.phone), compact(data.business.address)].filter(Boolean).join(' | ');
+          y += text(contact, margin + 13, y, width - 13, 8.5, colors.muted) + 17;
+          doc.moveTo(margin, y).lineTo(margin + width, y).strokeColor(colors.border).lineWidth(1).stroke();
+          y += 18;
+          let leftY = y;
+          text('ACCOUNT HOLDER', margin, leftY, 290, 8, colors.muted);
+          leftY += 16;
+          leftY += text(compact(data.customer.name), margin, leftY, 295, 13) + 4;
+          if (data.customer.phone) leftY += text(compact(data.customer.phone), margin, leftY, 295, 9, colors.muted) + 3;
+          leftY += text(`Credit terms: ${data.customer.credit_terms_days} days`, margin, leftY, 295, 9, colors.muted);
+          let rightY = y;
+          text('PERIOD', margin + width - 190, rightY, 190, 8, colors.muted, 'right');
+          rightY += 16;
+          rightY += text(period, margin + width - 190, rightY, 190, 9, colors.ink, 'right') + 6;
+          rightY += text(`Prepared ${date(new Date())}`, margin + width - 190, rightY, 190, 8.5, colors.muted, 'right');
+          y = Math.max(leftY, rightY) + 20;
+          const cards = [
+            ['Opening balance', data.openingBalance], ['Billed in period', data.totalBilled],
+            ['Paid in period', data.totalPaid], ['Closing balance', data.closingBalance]
+          ] as const;
+          const cardWidth = (width - 24) / 4;
+          cards.forEach(([label, value], index) => {
+            const x = margin + index * (cardWidth + 8);
+            doc.roundedRect(x, y, cardWidth, 67, 8).fill(index === 3 ? colors.soft : colors.row);
+            text(label, x + 10, y + 10, cardWidth - 20, 7.5, colors.muted);
+            text(amount(value), x + 10, y + 29, cardWidth - 20, 10, index === 2 ? colors.accent : colors.ink);
+          });
+          return y + 85;
+        };
+
+        const columns = [78, 145, 92, 92, width - 407];
+        const tableHeader = (y: number) => {
+          doc.roundedRect(margin, y, width, 30, 5).fill(colors.soft);
+          let x = margin;
+          ['Date', 'Reference', 'Debit', 'Credit', 'Balance'].forEach((label, index) => {
+            text(label, x + 8, y + 9, columns[index] - 16, 8, colors.muted, index >= 2 ? 'right' : 'left');
+            x += columns[index];
+          });
+          return y + 30;
+        };
+        let y = tableHeader(header());
+        let rowIndex = 0;
+        const row = (cells: string[]) => {
+          doc.font('Statement').fontSize(8.5);
+          const height = Math.max(34, ...cells.map((cell, index) => doc.heightOfString(cell, { width: columns[index] - 16, lineGap: 2 }) + 16));
+          if (y + height > bottom()) {
+            doc.addPage();
+            y = tableHeader(header(true));
+          }
+          if (rowIndex % 2 === 0) doc.rect(margin, y, width, height).fill(colors.row);
+          let x = margin;
+          cells.forEach((cell, index) => {
+            text(cell, x + 8, y + 8, columns[index] - 16, 8.5, index === 3 ? colors.accent : colors.ink, index >= 2 ? 'right' : 'left');
+            x += columns[index];
+          });
+          y += height;
+          doc.moveTo(margin, y).lineTo(margin + width, y).strokeColor(colors.border).lineWidth(0.35).stroke();
+          rowIndex++;
+        };
+
+        row(['Opening', 'Balance brought forward', '-', '-', amount(data.openingBalance)]);
+        for (const entry of data.entries) {
+          const activity = entry.type === 'INVOICE' ? 'Invoice' : entry.type === 'PAYMENT' ? 'Payment' : compact(entry.type);
+          row([
+            date(entry.date), `${activity}\n${compact(entry.reference_no)}`,
+            entry.debit === 0 ? '-' : amount(entry.debit), entry.credit === 0 ? '-' : amount(entry.credit), amount(entry.running_balance)
+          ]);
+        }
+        if (!data.entries.length) {
+          y += 15;
+          y += text('No transactions in this period.', margin + 8, y, width - 16, 9, colors.muted);
+        }
+
+        const footer = compact(data.business.footer);
+        doc.font('Statement').fontSize(9);
+        const closingHeight = 90 + (footer ? doc.heightOfString(footer, { width, lineGap: 2 }) + 15 : 0);
+        if (y + closingHeight > bottom()) {
+          doc.addPage();
+          y = header(true);
+        }
+        y += 16;
+        doc.roundedRect(margin, y, width, 65, 8).fill(colors.soft);
+        text('Closing balance for this period', margin + 13, y + 12, width - 180, 9);
+        text(amount(data.closingBalance), margin + width - 163, y + 10, 150, 11, colors.ink, 'right');
+        text('Current outstanding (all time)', margin + 13, y + 39, width - 180, 8, colors.muted);
+        text(amount(data.currentOutstanding), margin + width - 163, y + 37, 150, 9, colors.muted, 'right');
+        y += 81;
+        if (footer) text(footer, margin, y, width, 9, colors.muted);
+
+        const pages = doc.bufferedPageRange();
+        for (let index = pages.start; index < pages.start + pages.count; index++) {
+          doc.switchToPage(index);
+          // Footers sit outside the content margin and must never create another page.
+          const savedBottom = doc.page.margins.bottom;
+          doc.page.margins.bottom = 0;
+          doc.moveTo(margin, doc.page.height - 48).lineTo(margin + width, doc.page.height - 48).strokeColor(colors.border).lineWidth(0.5).stroke();
+          text(`Account statement | ${currency}`, margin, doc.page.height - 38, width - 100, 8, colors.muted);
+          text(`Page ${index + 1} of ${pages.count}`, margin + width - 100, doc.page.height - 38, 100, 8, colors.muted, 'right');
+          doc.page.margins.bottom = savedBottom;
+        }
+        doc.end();
+      } catch (error) {
+        doc.destroy();
+        reject(error);
+      }
+    });
+  }
 }

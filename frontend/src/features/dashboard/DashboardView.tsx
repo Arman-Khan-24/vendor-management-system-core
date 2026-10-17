@@ -1,291 +1,55 @@
-import React from 'react';
-import { Card, Badge, Button } from '../../components/ui';
-import { formatCurrency, formatDate } from '../../utils/formatters';
-import { DashboardSummary } from '../../types';
-import {
-  TrendingUp,
-  PackageCheck,
-  Clock,
-  AlertCircle,
-  Truck,
-  Plus,
-  ArrowUpRight,
-  Receipt,
-  Users,
-  Package,
-  Calendar
-} from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Check, CheckCircle2, Clock3, Package, Plus, ReceiptText, ShoppingBag, Truck, Users } from 'lucide-react';
+import { Badge, Button, Card, EmptyState, PageHeader, SectionHeading, TextLink } from '../../components/ui';
+import type { Customer, DashboardSummary, Order, Product } from '../../types';
+import { formatDate, localDate } from '../../utils/formatters';
+import { useBusiness } from '../settings/businessSettings';
+import { OrderBadge } from '../orders/OrdersView';
 
-interface DashboardViewProps {
-  summary: DashboardSummary | null;
-  onNavigateTab: (tab: string) => void;
-  onOpenNewOrder: () => void;
-  onOpenRecordPayment: () => void;
-}
-
-export function DashboardView({
-  summary,
-  onNavigateTab,
-  onOpenNewOrder,
-  onOpenRecordPayment
-}: DashboardViewProps) {
-  if (!summary) {
-    return (
-      <div className="flex items-center justify-center min-h-[50vh]">
-        <div className="w-8 h-8 border-4 border-brand-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Top Greeting & Operational Quick Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Today's Overview</h2>
-          <p className="text-xs text-slate-500 mt-0.5">Real-time daily ledger, sales, and collections</p>
-        </div>
-
-        <div className="flex items-center gap-2.5">
-          <Button variant="secondary" size="sm" onClick={onOpenRecordPayment}>
-            Record Payment
-          </Button>
-          <Button variant="primary" size="sm" onClick={onOpenNewOrder}>
-            <Plus className="w-4 h-4 stroke-[2.5]" />
-            New Order
-          </Button>
-        </div>
-      </div>
-
-      {/* Primary KPI Cards (Cashew-Style Soft Large Numbers) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Today's Sales */}
-        <Card className="border-emerald-100/60 bg-gradient-to-br from-white to-emerald-50/20">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-emerald-800/70">Today's Sales</span>
-            <div className="w-7 h-7 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
-              <TrendingUp className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-2xl font-black text-slate-900 tracking-tight">
-            {formatCurrency(summary.todaySales)}
-          </div>
-          <p className="text-[11px] text-emerald-600 font-semibold mt-1">
-            {summary.todayOrdersCount} orders placed today
-          </p>
-        </Card>
-
-        {/* Total Outstanding Dues */}
-        <Card className="border-amber-100/60 bg-gradient-to-br from-white to-amber-50/20">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-amber-800/70">Total Outstanding</span>
-            <div className="w-7 h-7 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
-              <Receipt className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-2xl font-black text-slate-900 tracking-tight">
-            {formatCurrency(summary.totalOutstanding)}
-          </div>
-          <p className="text-[11px] text-amber-600 font-semibold mt-1">
-            Overdue: {formatCurrency(summary.totalOverdue || 0)}
-          </p>
-        </Card>
-
-        {/* Collected Today */}
-        <Card className="border-sky-100/60 bg-gradient-to-br from-white to-sky-50/20">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-sky-800/70">Today's Collections</span>
-            <div className="w-7 h-7 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center">
-              <ArrowUpRight className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-2xl font-black text-slate-900 tracking-tight">
-            {formatCurrency(summary.todayCollected)}
-          </div>
-          <p className="text-[11px] text-sky-600 font-semibold mt-1">
-            Total Collected: {formatCurrency(summary.totalCollected)}
-          </p>
-        </Card>
-
-        {/* Active Orders in Pipeline */}
-        <Card className="border-indigo-100/60 bg-gradient-to-br from-white to-indigo-50/20">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-indigo-800/70">Active Pipeline</span>
-            <div className="w-7 h-7 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
-              <Truck className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-2xl font-black text-slate-900 tracking-tight">
-            {(summary.statusCounts.Received || 0) + (summary.statusCounts.Packed || 0)}
-          </div>
-          <p className="text-[11px] text-indigo-600 font-semibold mt-1">
-            {summary.statusCounts.Received || 0} received, {summary.statusCounts.Packed || 0} packed
-          </p>
-        </Card>
-      </div>
-
-      {/* Sales Trend & Collections Trend Visual Summary */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Sales Trend */}
-        <Card>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-emerald-600" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Recent Sales Trend</h3>
-            </div>
-            <button
-              onClick={() => onNavigateTab('reports')}
-              className="text-[11px] text-brand-600 hover:text-brand-700 font-bold"
-            >
-              Full Report →
-            </button>
-          </div>
-          <div className="divide-y divide-slate-100 text-xs">
-            {(!summary.salesTrend || summary.salesTrend.length === 0) ? (
-              <p className="text-slate-400 py-4 text-center">No recent sales data recorded.</p>
-            ) : (
-              summary.salesTrend.slice(-4).map((s, idx) => (
-                <div key={idx} className="py-2.5 flex items-center justify-between">
-                  <span className="font-semibold text-slate-700">{formatDate(s.period)}</span>
-                  <div className="text-right">
-                    <span className="font-extrabold text-slate-900">{formatCurrency(s.salesAmount)}</span>
-                    <span className="text-[10px] text-slate-400 block">{s.orderCount} orders</span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        {/* Collections Trend */}
-        <Card>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <ArrowUpRight className="w-4 h-4 text-sky-600" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Recent Collections</h3>
-            </div>
-            <button
-              onClick={() => onNavigateTab('reports')}
-              className="text-[11px] text-brand-600 hover:text-brand-700 font-bold"
-            >
-              Full Report →
-            </button>
-          </div>
-          <div className="divide-y divide-slate-100 text-xs">
-            {(!summary.collectionTrend || summary.collectionTrend.length === 0) ? (
-              <p className="text-slate-400 py-4 text-center">No recent payments recorded.</p>
-            ) : (
-              summary.collectionTrend.slice(-4).map((c, idx) => (
-                <div key={idx} className="py-2.5 flex items-center justify-between">
-                  <span className="font-semibold text-slate-700">{formatDate(c.period)}</span>
-                  <div className="text-right">
-                    <span className="font-extrabold text-emerald-800">{formatCurrency(c.collectedAmount)}</span>
-                    <span className="text-[10px] text-slate-400 block">{c.paymentCount} payments</span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-      </div>
-
-      {/* Top Customers & Top Products Highlights */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Top Customers */}
-        <Card>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-brand-600" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Top Customers</h3>
-            </div>
-            <button
-              onClick={() => onNavigateTab('customers')}
-              className="text-[11px] text-brand-600 hover:text-brand-700 font-bold"
-            >
-              View All →
-            </button>
-          </div>
-          <div className="divide-y divide-slate-100 text-xs">
-            {(!summary.topCustomers || summary.topCustomers.length === 0) ? (
-              <p className="text-slate-400 py-4 text-center">No customer data available yet.</p>
-            ) : (
-              summary.topCustomers.slice(0, 3).map((cust, idx) => (
-                <div key={cust.id} className="py-2.5 flex items-center justify-between">
-                  <div>
-                    <span className="font-bold text-slate-900 block">{cust.name}</span>
-                    <span className="text-[10px] text-slate-400">{cust.orderCount} orders · Due: {formatCurrency(cust.outstandingBalance)}</span>
-                  </div>
-                  <span className="font-extrabold text-slate-900">{formatCurrency(cust.totalSales)}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        {/* Top Products */}
-        <Card>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Package className="w-4 h-4 text-emerald-600" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Top Selling Products</h3>
-            </div>
-            <button
-              onClick={() => onNavigateTab('products')}
-              className="text-[11px] text-brand-600 hover:text-brand-700 font-bold"
-            >
-              View Catalog →
-            </button>
-          </div>
-          <div className="divide-y divide-slate-100 text-xs">
-            {(!summary.topProducts || summary.topProducts.length === 0) ? (
-              <p className="text-slate-400 py-4 text-center">No product data available yet.</p>
-            ) : (
-              summary.topProducts.slice(0, 3).map((prod) => (
-                <div key={prod.id} className="py-2.5 flex items-center justify-between">
-                  <div>
-                    <span className="font-bold text-slate-900 block">{prod.name}</span>
-                    <span className="text-[10px] text-slate-400">{prod.totalQuantitySold} {prod.unit} sold</span>
-                  </div>
-                  <span className="font-extrabold text-slate-900">{formatCurrency(prod.totalRevenue)}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-      </div>
-
-      {/* Operational Overdue Warning Banner */}
-      {summary.overdueCustomers && summary.overdueCustomers.length > 0 && (
-        <Card className="border-rose-100 bg-rose-50/20">
-          <div className="flex items-center gap-2 text-rose-800 font-bold text-xs uppercase tracking-wider mb-2">
-            <AlertCircle className="w-4 h-4 text-rose-600" />
-            <span>Overdue Credit Term Reminders ({summary.overdueCustomers.length})</span>
-          </div>
-          <p className="text-xs text-rose-600/90 mb-3">
-            The following customers have outstanding unpaid balances older than their agreed credit terms:
-          </p>
-          <div className="divide-y divide-rose-100/60">
-            {summary.overdueCustomers.map((c) => (
-              <div key={c.id} className="py-2.5 flex items-center justify-between text-xs">
-                <div>
-                  <span className="font-bold text-slate-900 block">{c.name}</span>
-                  <span className="text-slate-500 text-[11px]">
-                    Terms: {c.creditTermsDays} days · Phone: {c.phone}
-                  </span>
-                </div>
-                <div className="text-right">
-                  <span className="font-black text-rose-700 text-sm block">
-                    {formatCurrency(c.balance)}
-                  </span>
-                  <span className="text-[10px] text-slate-400">
-                    Since {formatDate(c.oldestInvoiceDate)}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
+export function DashboardView({ summary, customers, products, orders, userName, onNavigateTab, onOpenNewOrder, onOpenRecordPayment, onSelectOrder, onStatement }: {
+  summary: DashboardSummary; customers: Customer[]; products: Product[]; orders: Order[]; userName: string;
+  onNavigateTab: (tab: string) => void; onOpenNewOrder: () => void; onOpenRecordPayment: () => void;
+  onSelectOrder: (order: Order) => void; onStatement: (id: string) => void;
+}) {
+  const { settings, money } = useBusiness();
+  const dateLabel = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' });
+  const activeOrders = Number(summary.statusCounts.Received || 0) + Number(summary.statusCounts.Packed || 0);
+  const allOrders = activeOrders + Number(summary.statusCounts.Delivered || 0);
+  const ready = products.some(p => p.active) && customers.some(c => c.active) && orders.length > 0;
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(); date.setDate(date.getDate() - (6 - index));
+    const amount = (summary.salesTrend || []).filter(p => p.period.slice(0, 10) === localDate(date)).reduce((sum, p) => sum + Number(p.salesAmount), 0);
+    return { label: date.toLocaleDateString('en-IN', { weekday: 'short' }), amount, date: localDate(date) };
+  });
+  const max = Math.max(...days.map(d => d.amount), 1);
+  const greeting = new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 17 ? 'Good afternoon' : 'Good evening';
+  return <div className="page-stack">
+    <PageHeader eyebrow={dateLabel} title={greeting + ', ' + (userName.split(' ')[0] || 'there') + '.'} description="Here’s how your business is doing today." actions={settings.modules.payments ? <Button variant="secondary" onClick={onOpenRecordPayment}><Plus size={18} aria-hidden="true" />Record payment</Button> : undefined} />
+    {!ready && <Card><SectionHeading title="A little setup goes a long way" description="Three simple steps to your first completed order." /><div className="checklist">{[
+      { title: 'Build your catalog', description: 'Products, units and prices', done: products.some(p => p.active), action: () => onNavigateTab('products'), icon: Package },
+      { title: 'Add a customer', description: 'Contact and payment terms', done: customers.some(c => c.active), action: () => onNavigateTab('customers'), icon: Users },
+      { title: 'Take the first order', description: 'Bring it all together', done: orders.length > 0, action: onOpenNewOrder, icon: ShoppingBag },
+    ].map(({ title, description, done, action, icon: Icon }) => <button key={title} onClick={action}><span className="item-icon tonal">{done ? <Check size={21} aria-hidden="true" /> : <Icon size={21} aria-hidden="true" />}</span><span><strong>{title}</strong><small>{description}</small></span></button>)}</div></Card>}
+    <div className="dashboard-grid">
+      <div className="card tonal overview-hero"><h2>Total outstanding</h2><div className="hero-icon"><ReceiptText size={21} aria-hidden="true" /></div><div className="hero-value numeric">{money(summary.totalOutstanding)}</div><p className="small">Waiting to come back to your business.</p><div className="hero-detail"><div><span>Overdue</span><strong className="numeric">{money(summary.totalOverdue || 0)}</strong></div><div><span>Received so far</span><strong className="numeric">{money(summary.totalCollected)}</strong></div><Button variant="ghost" className="ml-auto" onClick={() => onNavigateTab('invoices')}>View invoices<ArrowUpRight size={17} aria-hidden="true" /></Button></div></div>
+      <Card><SectionHeading title="Orders in motion" description="Every stage, at a glance." action={<Badge>{activeOrders} active</Badge>} /><div className="progress-rail" aria-label={activeOrders + ' active orders and ' + (summary.statusCounts.Delivered || 0) + ' delivered'}>
+        <span className="tonal-peach" style={{ width: allOrders ? (summary.statusCounts.Received / allOrders * 100) + '%' : '0%' }} />
+        <span className="tonal-sky" style={{ width: allOrders ? (summary.statusCounts.Packed / allOrders * 100) + '%' : '0%' }} />
+        <span className="tonal" style={{ width: allOrders ? (summary.statusCounts.Delivered / allOrders * 100) + '%' : '0%' }} />
+      </div><div className="progress-labels"><div><strong>{summary.statusCounts.Received || 0}</strong>Received</div><div><strong>{summary.statusCounts.Packed || 0}</strong>Packed</div><div><strong>{summary.statusCounts.Delivered || 0}</strong>Delivered</div></div><div style={{ marginTop: 20 }}><TextLink onClick={() => onNavigateTab('orders')}>Open orders</TextLink></div></Card>
     </div>
-  );
+    <div className="stat-grid">
+      <div className="stat-card tonal-peach"><div className="stat-label"><span>Sales today</span><ShoppingBag size={20} aria-hidden="true" /></div><strong className="stat-value numeric">{money(summary.todaySales)}</strong><p className="stat-foot">{summary.todayOrdersCount} orders placed today</p></div>
+      <div className="stat-card tonal-lavender"><div className="stat-label"><span>Collected today</span><ArrowDownLeft size={20} aria-hidden="true" /></div><strong className="stat-value numeric">{money(summary.todayCollected)}</strong><p className="stat-foot">By the payment date you recorded</p></div>
+      <div className="stat-card tonal-sky"><div className="stat-label"><span>Ready to deliver</span><Truck size={20} aria-hidden="true" /></div><strong className="stat-value numeric">{summary.statusCounts.Packed || 0}</strong><p className="stat-foot">{summary.statusCounts.Received || 0} more waiting to be packed</p></div>
+    </div>
+    <div className="dashboard-grid">
+      <Card><SectionHeading title="Recent orders" description="The latest activity in your ledger." action={<TextLink onClick={() => onNavigateTab('orders')}>View all</TextLink>} />
+        {!orders.length ? <EmptyState title="A fresh start" description="Your first order will show up here." action={<Button variant="secondary" onClick={onOpenNewOrder}>New order</Button>} /> : orders.slice(0, 4).map(order => <div className="activity-row" key={order.id}><div className="item-icon tonal"><ShoppingBag size={19} aria-hidden="true" /></div><div className="grow"><button type="button" className="text-link" style={{ minHeight: 24, padding: 0 }} onClick={() => onSelectOrder(order)}>{order.customer_name}</button><p>#{order.order_no} · {formatDate(order.created_at)}</p></div><div className="right"><strong className="numeric">{money(order.total_amount)}</strong><div style={{ marginTop: 5 }}><OrderBadge status={order.status} /></div></div></div>)}
+      </Card>
+      <Card><SectionHeading title="Your week in sales" description="The past seven days, including today." /><strong className="stat-value numeric" style={{ fontSize: 28 }}>{money(days.reduce((sum, d) => sum + d.amount, 0))}</strong><div className="mini-chart" role="img" aria-label={'Sales for the past seven days: ' + days.map(d => d.label + ' ' + money(d.amount)).join(', ')}>{days.map(d => <div className="chart-column" key={d.date} title={d.label + ': ' + money(d.amount)}><div className="bar" style={{ height: Math.max(4, d.amount / max * 100) + '%' }} /><span>{d.label}</span></div>)}</div>{settings.modules.reports && <div style={{ marginTop: 14 }}><TextLink onClick={() => onNavigateTab('reports')}>Explore reports</TextLink></div>}</Card>
+    </div>
+    <Card><SectionHeading title="A gentle nudge" description="Customers with invoices past their payment terms." action={settings.modules.reports ? <TextLink onClick={() => onNavigateTab('reports')}>View dues</TextLink> : undefined} />
+      {!summary.overdueCustomers?.length ? <div className="row" style={{ padding: '12px 0' }}><div className="item-icon tonal"><CheckCircle2 size={22} aria-hidden="true" /></div><div><strong className="small">No overdue customers</strong><p className="muted small">A good place to be. Keep the ledger up to date.</p></div></div> : summary.overdueCustomers.slice(0, 4).map(customer => <div className="activity-row" key={customer.id}><div className="item-icon tonal-peach"><Clock3 size={20} aria-hidden="true" /></div><div className="grow"><strong>{customer.name}</strong><p>{customer.creditTermsDays} day payment terms</p></div><strong className="numeric">{money(customer.overdueAmount ?? customer.balance)}</strong><Button variant="secondary" size="sm" onClick={() => onStatement(customer.id)}>Statement</Button></div>)}
+    </Card>
+  </div>;
 }

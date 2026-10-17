@@ -5,11 +5,15 @@ export class ProductRepository {
   static async list({
     businessId,
     search,
-    activeOnly = true
+    activeOnly = true,
+    limit = 100,
+    offset = 0
   }: {
     businessId: string;
     search?: string;
     activeOnly?: boolean;
+    limit?: number;
+    offset?: number;
   }): Promise<Product[]> {
     let sql = 'SELECT * FROM products WHERE business_id = $1';
     const params: any[] = [businessId];
@@ -23,7 +27,8 @@ export class ProductRepository {
       sql += ` AND name ILIKE $${params.length}`;
     }
 
-    sql += ' ORDER BY name ASC';
+    params.push(limit, offset);
+    sql += ` ORDER BY name ASC, id ASC LIMIT $${params.length - 1} OFFSET $${params.length}`;
     const res = await query<Product>(sql, params);
     return res.rows.map(r => ({ ...r, current_price: parseFloat(r.current_price as any) }));
   }
@@ -48,12 +53,13 @@ export class ProductRepository {
     name: string;
     unit: string;
     currentPrice: number;
+    category?: string;
   }): Promise<Product> {
     const res = await query<Product>(
-      `INSERT INTO products (business_id, name, unit, current_price)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO products (business_id, name, unit, current_price, category)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [data.businessId, data.name, data.unit, data.currentPrice]
+      [data.businessId, data.name, data.unit, data.currentPrice, data.category ?? '']
     );
     const r = res.rows[0];
     return { ...r, current_price: parseFloat(r.current_price as any) };
@@ -86,15 +92,17 @@ export class ProductRepository {
   }: {
     productId: string;
     businessId: string;
-    data: Partial<Pick<Product, 'name' | 'unit' | 'current_price' | 'active'>>;
+    data: { name?: string; unit?: string; currentPrice?: number; category?: string; active?: boolean };
   }): Promise<Product | null> {
     const fields: string[] = [];
     const values: any[] = [];
     let idx = 1;
 
-    for (const [key, val] of Object.entries(data)) {
+    const columns = { name: 'name', unit: 'unit', currentPrice: 'current_price', category: 'category', active: 'active' } as const;
+    for (const key of Object.keys(columns) as (keyof typeof columns)[]) {
+      const val = data[key];
       if (val !== undefined) {
-        fields.push(`${key} = $${idx++}`);
+        fields.push(`${columns[key]} = $${idx++}`);
         values.push(val);
       }
     }
@@ -120,7 +128,7 @@ export class ProductRepository {
     businessId: string;
   }): Promise<boolean> {
     const res = await query(
-      'DELETE FROM products WHERE id = $1 AND business_id = $2 RETURNING id',
+      'UPDATE products SET active = FALSE, updated_at = NOW() WHERE id = $1 AND business_id = $2 RETURNING id',
       [productId, businessId]
     );
     return (res.rowCount ?? 0) > 0;
