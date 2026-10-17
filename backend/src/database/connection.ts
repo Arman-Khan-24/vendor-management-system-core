@@ -7,11 +7,14 @@ const { Pool } = pg;
  * Standard PostgreSQL connection pool.
  * OrderLedger strictly uses PostgreSQL as its sole database.
  */
+const isLocal = config.databaseUrl.includes('localhost') || config.databaseUrl.includes('127.0.0.1');
+
 export const pool = new Pool({
   connectionString: config.databaseUrl,
+  ssl: isLocal ? false : { rejectUnauthorized: false },
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  connectionTimeoutMillis: 10000,
 });
 
 pool.on('error', (err) => {
