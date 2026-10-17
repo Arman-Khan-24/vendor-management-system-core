@@ -1,17 +1,24 @@
-import puppeteer from 'puppeteer';
 export class PdfService {
     static browserPromise = null;
     static async getBrowser() {
         if (!this.browserPromise) {
-            this.browserPromise = puppeteer.launch({
-                headless: true,
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu'
-                ]
-            });
+            try {
+                const modName = 'puppeteer';
+                const puppeteer = await import(modName);
+                const launcher = puppeteer.default || puppeteer;
+                this.browserPromise = launcher.launch({
+                    headless: true,
+                    args: [
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-gpu'
+                    ]
+                });
+            }
+            catch (err) {
+                throw new Error('Puppeteer is not installed in this environment: ' + err.message);
+            }
         }
         return this.browserPromise;
     }

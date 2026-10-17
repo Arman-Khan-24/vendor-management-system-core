@@ -1,5 +1,3 @@
-import puppeteer, { Browser } from 'puppeteer';
-
 export interface BusinessBrandInfo {
   name: string;
   slug: string;
@@ -36,19 +34,26 @@ export interface StatementPdfData {
 }
 
 export class PdfService {
-  private static browserPromise: Promise<Browser> | null = null;
+  private static browserPromise: Promise<any> | null = null;
 
-  private static async getBrowser(): Promise<Browser> {
+  private static async getBrowser(): Promise<any> {
     if (!this.browserPromise) {
-      this.browserPromise = puppeteer.launch({
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu'
-        ]
-      });
+      try {
+        const modName = 'puppeteer';
+        const puppeteer: any = await import(modName);
+        const launcher = puppeteer.default || puppeteer;
+        this.browserPromise = launcher.launch({
+          headless: true,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu'
+          ]
+        });
+      } catch (err: any) {
+        throw new Error('Puppeteer is not installed in this environment: ' + err.message);
+      }
     }
     return this.browserPromise;
   }

@@ -12,8 +12,8 @@ async function bootstrap() {
     }
 
     const app = createApp();
-    app.listen(config.port, () => {
-      console.log(`🚀 OrderLedger Backend running at http://localhost:${config.port}`);
+    app.listen(config.port, '0.0.0.0', () => {
+      console.log(`🚀 OrderLedger Backend running at http://0.0.0.0:${config.port}`);
       console.log(`📡 Environment: ${config.env}`);
     });
   } catch (error) {
