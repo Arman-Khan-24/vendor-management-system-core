@@ -29,5 +29,5 @@ export function errorHandler(err: any, req: Request, res: Response, next: NextFu
     return;
   }
 
-  res.status(500).json({ error: 'Internal server error', details: err?.message, code: err?.code });
+  res.status(500).json({ error: 'Internal server error' });
 }
