@@ -5,11 +5,12 @@ import { Badge, Button, ErrorNotice, Input, LoadingState, SectionHeading, Select
 import type { Connections, ProviderConnection } from '../../types';
 import { errorMessage } from '../../utils/formatters';
 
-export function ServerConnection({ signedIn = false }: { signedIn?: boolean }) {
+export function ServerConnection({ signedIn = false, onDirtyChange }: { signedIn?: boolean; onDirtyChange?: (dirty: boolean) => void }) {
   const [endpoint, setEndpoint] = useState(ApiClient.getConnection());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tested, setTested] = useState<string | null>(null);
+  useEffect(() => { onDirtyChange?.(endpoint !== ApiClient.getConnection()); return () => onDirtyChange?.(false); }, [endpoint, onDirtyChange]);
   const test = async () => {
     setBusy(true); setError(null); setTested(null);
     try { await ApiClient.testConnection(endpoint); setTested(endpoint); } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
@@ -35,22 +36,29 @@ const providerDefaults = {
   groq: { endpoint: 'https://api.groq.com/openai/v1', model: '' },
   custom: { endpoint: '', model: '' },
 };
-export function ProviderConnections() {
+export function ProviderConnections({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
   const [draft, setDraft] = useState<{ primary: ProviderDraft; fallback: ProviderDraft } | null>(null);
+  const [stored, setStored] = useState<Connections | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const dirty = !!draft && !!stored && JSON.stringify(draft) !== JSON.stringify(toDraft(stored));
+  useEffect(() => { onDirtyChange(dirty); return () => onDirtyChange(false); }, [dirty, onDirtyChange]);
   const load = async () => {
     setError(null);
-    try { setDraft(toDraft(await ApiClient.getConnections())); } catch (e) { setError(errorMessage(e)); }
+    try { const connections = await ApiClient.getConnections(); setStored(connections); setDraft(toDraft(connections)); } catch (e) { setError(errorMessage(e)); }
   };
   useEffect(() => { void load(); }, []);
   const change = (key: 'primary' | 'fallback', fields: Partial<ProviderDraft>) => { setDraft(d => d ? { ...d, [key]: { ...d[key], ...fields } } : d); setSaved(false); };
   const save = async (event: React.FormEvent) => {
-    event.preventDefault(); if (!draft) return;
+    event.preventDefault(); if (!draft || !stored) return;
     setBusy(true); setError(null); setSaved(false);
-    const payload = (value: ProviderDraft) => ({ provider: value.provider, endpoint: value.endpoint.trim(), model: value.model.trim(), ...(value.clearKey ? { apiKey: '' } : value.apiKey.trim() ? { apiKey: value.apiKey.trim() } : {}) });
-    try { setDraft(toDraft(await ApiClient.updateConnections({ primary: payload(draft.primary), fallback: payload(draft.fallback) }))); setSaved(true); }
+    const payload = (value: ProviderDraft, original: ProviderConnection) => Object.fromEntries(Object.entries({ provider: value.provider, endpoint: value.endpoint.trim(), model: value.model.trim(), ...(value.clearKey ? { apiKey: '' } : value.apiKey.trim() ? { apiKey: value.apiKey.trim() } : {}) }).filter(([key, entry]) => key === 'apiKey' || entry !== original[key as keyof ProviderConnection]));
+    const changes = Object.fromEntries((['primary', 'fallback'] as const).flatMap(slot => {
+      const patch = payload(draft[slot], stored[slot]);
+      return Object.keys(patch).length ? [[slot, patch]] : [];
+    }));
+    try { const connections = await ApiClient.updateConnections(changes); setStored(connections); setDraft(toDraft(connections)); setSaved(true); }
     catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
   return <div className="stack">
@@ -67,7 +75,8 @@ export function ProviderConnections() {
       </div>)}
       <p className="form-note">WhatsApp ordering is not connected. Saving these settings does not activate AI processing or send messages.</p>
       {saved && <p className="success-note" role="status"><CheckCircle2 size={16} className="inline" aria-hidden="true" /> Connections saved.</p>}
-      <div className="form-actions"><Button type="submit" busy={busy}><Save size={17} aria-hidden="true" />Save provider connections</Button></div>
+      {dirty && <p className="form-note">You have unsaved provider changes.</p>}
+      <div className="form-actions"><Button variant="ghost" disabled={!dirty || busy} onClick={() => { if (stored) setDraft(toDraft(stored)); setError(null); setSaved(false); }}>Discard provider changes</Button><Button type="submit" disabled={!dirty} busy={busy}><Save size={17} aria-hidden="true" />Save provider connections</Button></div>
     </form>}
   </div>;
 }

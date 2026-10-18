@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { BookOpen, Boxes, Check, CreditCard, Download, Layers3, Leaf, Link2, Milk, Paintbrush, Save, Settings2, ShoppingBasket, Store, Upload } from 'lucide-react';
 import { Badge, Button, Card, ErrorNotice, Input, Modal, PageHeader, SectionHeading, Select, Switch, Textarea } from '../../components/ui';
-import type { Accent, Business, BusinessSettings, BusinessUpdate, PaymentMode, Theme, User } from '../../types';
+import type { Accent, Business, BusinessPatch, BusinessSettings, BusinessUpdate, PaymentMode, Theme, User } from '../../types';
 import { downloadFile, errorMessage } from '../../utils/formatters';
 import { getSettings, presets } from './businessSettings';
 import { ProviderConnections, ServerConnection } from './ConnectionSettings';
@@ -18,6 +18,15 @@ const sections = [
 ];
 function businessDraft(b: Business): BusinessUpdate {
   return { name: b.name, phone: b.phone || '', currency: b.currency, logoUrl: b.logo_url || '', invoiceTrigger: b.invoice_trigger, categoryTemplate: b.category_template || 'custom', settings: structuredClone(getSettings(b)) };
+}
+function businessChanges(draft: BusinessUpdate, saved: BusinessUpdate): BusinessPatch {
+  const patch: BusinessPatch = Object.fromEntries(Object.entries(draft).filter(([key, value]) => key !== 'settings' && value !== saved[key as keyof BusinessUpdate]));
+  const settings = Object.fromEntries((Object.keys(draft.settings) as (keyof BusinessSettings)[]).flatMap(section => {
+    const changes = Object.fromEntries(Object.entries(draft.settings[section]).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify((saved.settings[section] as Record<string, unknown>)[key])));
+    return Object.keys(changes).length ? [[section, changes]] : [];
+  }));
+  if (Object.keys(settings).length) patch.settings = settings;
+  return patch;
 }
 function CommaList({ label, values, onChange, hint }: { label: string; values: string[]; onChange: (v: string[]) => void; hint: string }) {
   const [text, setText] = useState(values.join(', '));
@@ -61,7 +70,7 @@ function readBlueprint(value: unknown): Blueprint {
     },
   };
 }
-export function SettingsView({ business, user, onSave, onDirtyChange, initialSection = 'business' }: { business: Business; user: User; onSave: (data: BusinessUpdate) => Promise<void>; onDirtyChange: (dirty: boolean) => void; initialSection?: string }) {
+export function SettingsView({ business, user, onSave, onDirtyChange, initialSection = 'business' }: { business: Business; user: User; onSave: (data: BusinessPatch) => Promise<void>; onDirtyChange: (dirty: boolean) => void; initialSection?: string }) {
   const [section, setSection] = useState(initialSection);
   const [draft, setDraft] = useState(() => businessDraft(business));
   const [busy, setBusy] = useState(false);
@@ -69,26 +78,31 @@ export function SettingsView({ business, user, onSave, onDirtyChange, initialSec
   const [preset, setPreset] = useState<typeof presets[number] | null>(null);
   const [imported, setImported] = useState<Blueprint | null>(null);
   const [saved, setSaved] = useState(false);
+  const [connectionsDirty, setConnectionsDirty] = useState(false);
+  const [serverDirty, setServerDirty] = useState(false);
   const isOwner = user.role === 'OWNER';
   const dirty = JSON.stringify(draft) !== JSON.stringify(businessDraft(business));
+  const anyDirty = dirty || connectionsDirty || serverDirty;
   useEffect(() => { setDraft(businessDraft(business)); }, [business]);
-  useEffect(() => { onDirtyChange(dirty); return () => onDirtyChange(false); }, [dirty, onDirtyChange]);
+  useEffect(() => { onDirtyChange(anyDirty); return () => onDirtyChange(false); }, [anyDirty, onDirtyChange]);
   useEffect(() => { setSection(initialSection); }, [initialSection]);
   useEffect(() => {
-    if (!dirty) return;
+    if (!anyDirty) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
+  }, [anyDirty]);
   const update = (patch: Partial<BusinessUpdate>) => { setDraft(d => ({ ...d, ...patch })); setSaved(false); };
   const setting = <K extends keyof BusinessSettings>(key: K, patch: Partial<BusinessSettings[K]>) => { setDraft(d => ({ ...d, settings: { ...d.settings, [key]: { ...d.settings[key], ...patch } } })); setSaved(false); };
   const save = async (event: React.FormEvent) => {
     event.preventDefault(); setError(null); setSaved(false); setBusy(true);
     try {
-      if (!draft.name.trim()) throw new Error('Enter your business name.');
-      if (!draft.settings.catalog.units.includes(draft.settings.catalog.defaultUnit)) throw new Error('Add the default unit to your units list in Catalog & labels.');
-      if (!draft.settings.billing.paymentMethods.length) throw new Error('Choose at least one payment method.');
-      await onSave({ ...draft, name: draft.name.trim() }); setSaved(true);
+      if (!business.settings) throw new Error('This server is running an older OrderLedger API. Deploy the current backend before saving settings.');
+      const patch = businessChanges(draft, businessDraft(business));
+      if (patch.name !== undefined && patch.name.trim().length < 2) throw new Error('Enter a business name with at least two characters.');
+      if (patch.settings?.catalog && !draft.settings.catalog.units.includes(draft.settings.catalog.defaultUnit)) throw new Error('Add the default unit to your units list in Catalog & labels.');
+      if (patch.settings?.billing?.paymentMethods && !patch.settings.billing.paymentMethods.length) throw new Error('Choose at least one payment method.');
+      await onSave(patch); setSaved(true);
     } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
   const importFile = async (file?: File) => {
@@ -106,13 +120,16 @@ export function SettingsView({ business, user, onSave, onDirtyChange, initialSec
   };
   const s = draft.settings;
   return <div className="page-stack">
-    <PageHeader eyebrow="A workspace that feels like you" title="Make it yours." description="Your business, your way. Set it up once and make every day simpler." />
-    {!isOwner && <Card><Badge>Business owner access</Badge><p className="muted" style={{ marginTop: 12 }}>You are signed in as {user.email}. Business settings and saved provider connections can be changed by the owner.</p><div className="section-divider" /><ServerConnection signedIn /></Card>}
+    <PageHeader eyebrow="A workspace that feels like you" title="Make it yours." description="Your business, your way. Set it up once and make every day simpler." actions={<Button variant="outline" onClick={() => { setSection('connections'); setError(null); }}><Link2 size={17} aria-hidden="true" />Server & API settings</Button>} />
+    {!business.settings && <ErrorNotice message="Your website is connected to an older OrderLedger backend. Update the API deployment, then reload this page to enable saved settings. Open Server & API settings to check the connection." />}
+    {!isOwner && <Card><Badge>Business owner access</Badge><p className="muted" style={{ marginTop: 12 }}>You are signed in as {user.email}. Business settings and saved provider connections can be changed by the owner.</p><div className="section-divider" /><ServerConnection signedIn onDirtyChange={setServerDirty} /></Card>}
     {isOwner && <div className="settings-layout">
       <nav className="settings-nav" aria-label="Settings sections">{sections.map(({ id, title, icon: Icon }) => <button type="button" key={id} aria-current={section === id ? 'page' : undefined} onClick={() => { setSection(id); setError(null); }} className={'nav-item ' + (section === id ? 'selected' : '')}><Icon size={18} aria-hidden="true" /><span>{title}</span></button>)}</nav>
       <div className="settings-panel">
         <ErrorNotice message={error} />
-        {section === 'connections' ? <div className="stack"><Card className="settings-section"><ServerConnection signedIn /></Card><Card className="settings-section"><ProviderConnections /></Card></div> :
+        {error && <Button variant="outline" onClick={() => setSection('connections')}><Link2 size={17} aria-hidden="true" />Check server connection</Button>}
+        <div className="stack" hidden={section !== 'connections'} style={section !== 'connections' ? { display: 'none' } : undefined}><Card className="settings-section"><ServerConnection signedIn onDirtyChange={setServerDirty} /></Card><Card className="settings-section"><ProviderConnections onDirtyChange={setConnectionsDirty} /></Card></div>
+        {section !== 'connections' &&
           <form onSubmit={save}>
             <div className="card settings-section">
               {section === 'business' && <div className="stack">
@@ -120,7 +137,7 @@ export function SettingsView({ business, user, onSave, onDirtyChange, initialSec
                 <div className="form-grid"><Input label="Business name" value={draft.name} required minLength={2} maxLength={100} onChange={e => update({ name: e.target.value })} /><Input label="Phone number" type="tel" value={draft.phone} maxLength={25} onChange={e => update({ phone: e.target.value })} />
                   <Input label="Business email" type="email" value={s.profile.email} onChange={e => setting('profile', { email: e.target.value })} /><Select label="Currency" value={draft.currency} onChange={e => update({ currency: e.target.value })}>{['INR', 'USD', 'EUR', 'GBP', 'AED', 'CAD', 'AUD', 'SGD', 'BDT', 'NPR', 'PKR'].map(c => <option key={c}>{c}</option>)}</Select>
                   <div className="form-span"><Textarea label="Business address" rows={3} value={s.profile.address} maxLength={500} onChange={e => setting('profile', { address: e.target.value })} /></div>
-                  <Input label="Tax registration number" value={s.profile.taxId} maxLength={100} placeholder="Optional GSTIN / tax ID" onChange={e => setting('profile', { taxId: e.target.value })} /><Input label="Logo URL" type="url" value={draft.logoUrl} placeholder="https://…" onChange={e => update({ logoUrl: e.target.value })} /></div>
+                  <Input label="Tax registration number" value={s.profile.taxId} maxLength={60} placeholder="Optional GSTIN / tax ID" onChange={e => setting('profile', { taxId: e.target.value })} /><Input label="Logo URL" type="url" value={draft.logoUrl} maxLength={2048} placeholder="https://…" onChange={e => update({ logoUrl: e.target.value })} /></div>
                 <p className="form-note">Currency is fixed once financial activity is recorded. Create a separate business for another currency.</p>
                 <div className="section-divider" /><div className="row between wrap"><div><strong className="small">Owner account</strong><p className="muted small">{user.name} · {user.email}</p></div><Badge>Owner</Badge></div>
               </div>}
@@ -165,7 +182,7 @@ export function SettingsView({ business, user, onSave, onDirtyChange, initialSec
                 <p className="form-note">Blueprints exclude customer records, orders, payments, business contact details, API keys, and the device’s server address. Presets never delete your existing catalog.</p>
               </div>}
             </div>
-            <div className="settings-save"><p>{saved && !dirty ? 'All changes saved.' : dirty ? 'You have unsaved changes.' : 'Your settings are up to date.'}</p><div className="row"><Button variant="ghost" disabled={!dirty || busy} onClick={() => { setDraft(businessDraft(business)); setError(null); setSaved(false); }}>Discard</Button><Button type="submit" disabled={!dirty} busy={busy}><Save size={17} aria-hidden="true" />Save changes</Button></div></div>
+            <div className="settings-save"><p>{!business.settings ? 'Update the API to enable saving.' : saved && !dirty ? 'All changes saved.' : dirty ? 'You have unsaved changes.' : 'Your settings are up to date.'}</p><div className="row"><Button variant="ghost" disabled={!dirty || busy} onClick={() => { setDraft(businessDraft(business)); setError(null); setSaved(false); }}>Discard</Button><Button type="submit" disabled={!dirty || !business.settings} busy={busy}><Save size={17} aria-hidden="true" />Save changes</Button></div></div>
           </form>}
         {section === 'connections' && dirty && <p className="form-note" style={{ marginTop: 16 }}>Your business settings have unsaved changes. Return to a settings section to save them.</p>}
       </div>

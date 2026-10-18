@@ -26,7 +26,7 @@ export function createApp() {
   app.get('/health', async (req, res) => {
     try {
       await checkDatabaseReadiness();
-      res.json({ status: 'ok', service: 'OrderLedger Core API', timestamp: new Date().toISOString() });
+      res.json({ status: 'ok', service: 'OrderLedger Core API', apiVersion: 2, timestamp: new Date().toISOString() });
     } catch {
       res.status(503).json({ status: 'unavailable', service: 'OrderLedger Core API', error: 'Database connection or migrations are not ready.' });
     }

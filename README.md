@@ -43,7 +43,7 @@ Backend, in one terminal:
 ```powershell
 cd backend
 npm ci
-Copy-Item .env.example .env
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
 # Edit .env: set DATABASE_URL and your own JWT_SECRET.
 npm run dev
 ```
@@ -58,7 +58,7 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:5173`. Vite proxies `/api` to the default backend. To use a different backend, set `VITE_API_URL` before starting/building, or change the connection in the interface.
+Open `http://localhost:5173`. Vite proxies `/api` and `/health` to the default backend. To use a different backend, set `VITE_API_URL` before starting/building, or open **Settings → Server & API settings** in the interface. The connection test checks database readiness and API compatibility.
 
 ### Disposable demo and browser testing
 
@@ -79,7 +79,9 @@ Open `http://127.0.0.1:5174`. Register a test account. Stop the isolated server 
 
 Backend: `npm ci`, `npm run build`, then `npm start` from `backend/`. The build copies SQL migrations and the licensed PDF font into `dist`. Generated `dist` files are ignored by Git and must be built on the host.
 
-Frontend: run `npm ci` and `npm run build` from `frontend/`, with `VITE_API_URL` set to the HTTPS API address if the API is on another origin. Deploy `frontend/dist` to a static host; alternatively, route the site's `/api` requests to the backend.
+Frontend: run `npm ci` and `npm run build` from `frontend/`, with `VITE_API_URL` set to the HTTPS API address if the API is on another origin. Deploy `frontend/dist` to a static host; alternatively, route the site's `/api` and `/health` requests to the backend.
+
+Deploy the backend before the matching frontend. `/health` must report `apiVersion: 2`, and authenticated `/api/business` must include `settings`. A successful health response from an older API does not prove it supports the current interface. The 18 October live incident and essential CRM backlog are documented in [CRM audit](CRM_AUDIT_2026-10-18.md).
 
 `render.yaml` provisions the API service. Supply `DATABASE_URL`; Render generates `JWT_SECRET`. Production startup requires an explicit database URL and a secret of at least 32 characters without whitespace or known placeholder values. Generate a secret with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` and store it securely. Keep the generated secret across redeployments.
 
@@ -116,6 +118,8 @@ npm run preview -- --host 127.0.0.1 --port 5175 --strictPort
 ```
 
 Then run `py -3 scripts/ui_redesign.py` from `frontend/`. It checks dashboard actions, page search, eight screens at widths from 320px to 1440px in both themes, invoice focus/printing, and pagination/search/export with 1,000 fixture records per list. It records click-to-frame navigation measurements across five lists. The long invoice and large lists use intercepted GET responses; normal workflow checks use the disposable API. Artifacts stay under the OS temporary directory in `orderledger-redesign-qa`.
+
+Run `py -3 scripts/ui_settings.py` against the same preview and disposable API for settings regressions. It creates a separate synthetic account and covers persistence, every theme/palette, concurrent independent changes, validation messages, connection drafts, database readiness, legacy APIs and failed saves. Its artifacts stay in the OS temporary directory under `orderledger-settings-qa`.
 
 See the [interface and performance verification](VERIFICATION_2026-10-18.md), [ledger verification](VERIFICATION_2026-10-17.md), and [original technical review with remediation status](TECHNICAL_REVIEW_2026-10-17.md).
 

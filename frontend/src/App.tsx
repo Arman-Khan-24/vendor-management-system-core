@@ -17,7 +17,7 @@ import { ReportsView } from './features/reports/ReportsView';
 import { BusinessProvider, getSettings } from './features/settings/businessSettings';
 import { ServerConnection } from './features/settings/ConnectionSettings';
 import { SettingsView } from './features/settings/SettingsView';
-import type { Business, BusinessUpdate, Customer, CustomerInput, DashboardSummary, Invoice, Order, OrderInput, OrderStatus, Payment, PaymentInput, Product, ProductInput, User } from './types';
+import type { Business, BusinessPatch, Customer, CustomerInput, DashboardSummary, Invoice, Order, OrderInput, OrderStatus, Payment, PaymentInput, Product, ProductInput, User } from './types';
 import { errorMessage } from './utils/formatters';
 
 export function App() {
@@ -154,9 +154,9 @@ export function App() {
     finally { if (detail.current === version) setStatementLoading(false); }
   };
   const openPayment = (customerId = '') => { detail.current++; setInvoiceId(null); setStatementId(null); setOrder(null); setPaymentFor(customerId); };
-  const saveSettings = async (data: BusinessUpdate) => {
+  const saveSettings = async (data: BusinessPatch) => {
     const updated = await ApiClient.updateBusiness(data);
-    setBusiness(updated); setToast('Business settings saved.'); setSettingsDirty(false);
+    setBusiness(updated); setToast('Business settings saved.');
     void refresh();
   };
   if (authLoading) return <BusinessProvider business={null}><LoadingState label="Opening your workspace…" /></BusinessProvider>;

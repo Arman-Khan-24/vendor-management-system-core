@@ -315,7 +315,9 @@ test('all collections use stable limit/offset paging and validate report date ra
 });
 
 test('health reports pending migrations and becomes ready only when all are recorded', async () => {
-  assert.equal((await request('/health', undefined, 'GET', '')).status, 200);
+  const healthy = await request('/health', undefined, 'GET', '');
+  assert.equal(healthy.status, 200);
+  assert.equal(healthy.data.apiVersion, 2);
   await pool.query("DELETE FROM _migrations WHERE filename = '005_ledger_snapshots.sql'");
   try {
     assert.equal((await request('/health', undefined, 'GET', '')).status, 503);

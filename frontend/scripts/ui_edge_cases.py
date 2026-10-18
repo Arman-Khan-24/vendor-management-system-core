@@ -1,16 +1,23 @@
 """Focused acceptance of blueprint application, failed saves and server switching."""
+import argparse
 import json
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright, expect
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--base-url', default='http://127.0.0.1:5174')
+args = parser.parse_args()
+if urlparse(args.base_url).hostname not in ['localhost', '127.0.0.1']:
+    raise SystemExit('Use a disposable loopback server only.')
 out = Path(tempfile.gettempdir()) / "orderledger-ui-qa"
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     context = browser.new_context(storage_state=str(out / "browser-state.json"), viewport={"width": 1440, "height": 1000})
     page = context.new_page()
     page.set_default_timeout(20000)
-    page.goto("http://127.0.0.1:5174", wait_until="networkidle")
+    page.goto(args.base_url, wait_until="networkidle")
     nav = page.get_by_role("navigation", name="Main navigation", exact=True)
     nav.get_by_role("button", name="Settings", exact=True).click()
     sections = page.get_by_role("navigation", name="Settings sections")

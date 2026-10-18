@@ -36,6 +36,9 @@ export interface BusinessUpdate {
   invoiceTrigger: 'Packed' | 'Delivered'; categoryTemplate: string;
   settings: BusinessSettings;
 }
+export type BusinessPatch = Partial<Omit<BusinessUpdate, 'settings'>> & {
+  settings?: { [K in keyof BusinessSettings]?: Partial<BusinessSettings[K]> };
+};
 export interface ProductInput { name: string; unit: string; currentPrice: number; category?: string }
 export interface CustomerInput { name: string; phone: string; creditTermsDays: number }
 export interface OrderInput { customerId: string; notes?: string; items: { productId: string; quantity: number }[] }

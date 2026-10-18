@@ -1,4 +1,4 @@
-import type { Business, BusinessUpdate, Connections, Customer, CustomerInput, DashboardSummary, Invoice, Order, OrderInput, Payment, PaymentInput, Product, ProductInput, ProviderConnection, User } from '../types';
+import type { Business, BusinessPatch, Connections, Customer, CustomerInput, DashboardSummary, Invoice, Order, OrderInput, Payment, PaymentInput, Product, ProductInput, ProviderConnection, User } from '../types';
 import { downloadFile } from '../utils/formatters';
 
 const TOKEN_KEY = 'orderledger_token';
@@ -39,10 +39,15 @@ export class ApiClient {
   }
   static async testConnection(value: string) {
     const base = normalizeApiUrl(value);
+    const health = await fetch(base + '/health', { signal: AbortSignal.timeout(10000), credentials: 'omit', redirect: 'error' });
+    if (!health.ok) throw new Error('Server setup is not ready (' + health.status + '). Check the API deployment and database migrations.');
+    const readiness = await health.json().catch(() => null);
+    if (readiness?.status !== 'ok' || readiness?.service !== 'OrderLedger Core API') throw new Error('This address did not return an OrderLedger API health response.');
+    if (readiness.apiVersion !== 2) throw new Error('This server is running an older or incompatible OrderLedger API. Deploy the current backend before using these settings.');
     const response = await fetch(base + '/api/auth/templates', { signal: AbortSignal.timeout(10000), credentials: 'omit', redirect: 'error' });
     if (!response.ok) throw new Error('Server returned ' + response.status + '. Check the address and database connection.');
     const data = await response.json();
-    if (!Array.isArray(data.templates)) throw new Error('This address did not return an OrderLedger API response.');
+    if (!Array.isArray(data?.templates)) throw new Error('This address did not return an OrderLedger API response.');
     return true;
   }
   private static async response(endpoint: string, options: RequestInit = {}) {
@@ -59,14 +64,18 @@ export class ApiClient {
       throw new ApiError('Cannot reach the server. Check your internet connection and API address in Connections.', 0);
     }
     if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
+      const body = await response.json().catch(() => null);
+      const data = body && typeof body === 'object' ? body : {};
       if (response.status === 401 && token && !endpoint.startsWith('/auth/')) {
         this.clearToken();
         window.dispatchEvent(new Event('orderledger:unauthorized'));
       }
       let message = typeof data.error === 'string' ? data.error : typeof data.message === 'string' ? data.message : 'Request failed (' + response.status + ').';
       if (data.details && Array.isArray(data.details)) {
-        message += ' ' + data.details.map((d: { message?: string; path?: string[] }) => [d.path?.join('.'), d.message].filter(Boolean).join(': ')).join('. ');
+        message += ' ' + data.details.map((d: { message?: unknown; path?: unknown } | null) => {
+          const path = Array.isArray(d?.path) ? d.path.join('.') : typeof d?.path === 'string' ? d.path : '';
+          return [path, typeof d?.message === 'string' ? d.message : ''].filter(Boolean).join(': ');
+        }).filter(Boolean).join('. ');
       }
       throw new ApiError(message, response.status);
     }
@@ -100,8 +109,18 @@ export class ApiClient {
   static getMe() { return this.request<{ user: User; business: Business }>('/auth/me'); }
   static getTemplates() { return this.request<{ templates: { id: string; name: string }[] }>('/auth/templates'); }
   static getBusiness() { return this.request<Business>('/business'); }
-  static updateBusiness(body: BusinessUpdate) { return this.write<Business>('/business', body, 'PATCH'); }
-  static getConnections() { return this.request<Connections>('/business/connections'); }
+  static async updateBusiness(body: BusinessPatch) {
+    const updated = await this.write<Business>('/business', body, 'PATCH');
+    if (!updated?.settings) throw new ApiError('The server did not return saved settings. Deploy the current OrderLedger backend, then reload and retry.', 503);
+    return updated;
+  }
+  static async getConnections() {
+    try { return await this.request<Connections>('/business/connections'); }
+    catch (error) {
+      if (error instanceof ApiError && error.status === 404) throw new ApiError('Provider settings are unavailable on this server. Deploy the current OrderLedger backend to enable Connections.', 503);
+      throw error;
+    }
+  }
   static updateConnections(body: Partial<Record<'primary' | 'fallback', Partial<Omit<ProviderConnection, 'hasApiKey'>> & { apiKey?: string }>>) { return this.write<Connections>('/business/connections', body, 'PATCH'); }
   static getDashboard() { return this.request<DashboardSummary>('/dashboard/summary'); }
   static getOrders(params?: { status?: string; customerId?: string }) { return this.listAll<Order>('/orders', params); }
