@@ -2,7 +2,7 @@
 
 A configurable order, invoice, and customer ledger for small wholesale businesses. React 19 + TypeScript + Vite on the frontend; Express + PostgreSQL on the backend. Each business has its own records and owner-managed settings.
 
-The interface uses rounded, Cashew-inspired surfaces, four pastel palettes, light/dark/system themes, and desktop/mobile navigation.
+The interface uses a cream workspace, dark sidebar, pastel billing summaries, and light/dark/system themes. Invoices have a landscape header, a clear item table, and a responsive action dock. Desktop page search and mobile navigation connect the same business workflows.
 
 ## Set up a business for a client
 
@@ -23,6 +23,8 @@ Blueprints copy configuration only. They exclude business identity/contact detai
 - **Statements and reports:** opening/closing balances, date filters, statement PDFs, CSV exports, dues aging, sales, collections, and rankings.
 
 Archived products/customers remain in historical records. Orders and invoices preserve product names, prices, units, credit terms, tax, and invoice settings so subsequent catalog/settings edits do not rewrite them. Currency changes are blocked once financial activity exists.
+
+Catalog, customer, order, payment, and invoice lists render 24 records per page. Searches and CSV exports cover all matching loaded records, and changing a filter resets pagination. The browser still fetches all records in API batches; this limits rendering work, not network transfer or total data held in memory. Currency formatters are reused, fonts are served locally, and short page transitions respect reduced-motion preferences.
 
 ### Connections
 
@@ -99,7 +101,7 @@ From `frontend/`, while the disposable API and frontend above are running:
 
 ```powershell
 npm run build
-py -3 -m pip install playwright
+py -3 -m pip install playwright pypdf
 py -3 -m playwright install chromium
 py -3 scripts/ui_acceptance.py --stage all
 py -3 scripts/ui_edge_cases.py
@@ -107,7 +109,15 @@ py -3 scripts/ui_edge_cases.py
 
 Use `python3` instead of `py -3` where appropriate. The edge-case script uses the account/state created by acceptance and the default loopback ports. Screenshots, PDFs, and synthetic account state stay in the OS temporary directory under `orderledger-ui-qa`, not in Git. Separate `setup`, `workflow`, and `responsive` stages are available for slower machines.
 
-See [verification results](VERIFICATION_2026-10-17.md) and the [original technical review with remediation status](TECHNICAL_REVIEW_2026-10-17.md).
+For the redesign checks and production-build measurements, keep the disposable API running. After the acceptance script above, build the frontend with `VITE_API_URL=http://127.0.0.1:5100` and start a preview in another terminal:
+
+```powershell
+npm run preview -- --host 127.0.0.1 --port 5175 --strictPort
+```
+
+Then run `py -3 scripts/ui_redesign.py` from `frontend/`. It checks dashboard actions, page search, eight screens at widths from 320px to 1440px in both themes, invoice focus/printing, and pagination/search/export with 1,000 fixture records per list. It records click-to-frame navigation measurements across five lists. The long invoice and large lists use intercepted GET responses; normal workflow checks use the disposable API. Artifacts stay under the OS temporary directory in `orderledger-redesign-qa`.
+
+See the [interface and performance verification](VERIFICATION_2026-10-18.md), [ledger verification](VERIFICATION_2026-10-17.md), and [original technical review with remediation status](TECHNICAL_REVIEW_2026-10-17.md).
 
 ## Current boundaries
 

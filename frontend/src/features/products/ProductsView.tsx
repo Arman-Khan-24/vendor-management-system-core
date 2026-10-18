@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Archive, Check, Download, Package, Pencil, Plus, RotateCcw, Settings2 } from 'lucide-react';
-import { Badge, Button, EmptyState, ErrorNotice, Input, Modal, PageHeader, SearchBox, Select } from '../../components/ui';
+import { Badge, Button, EmptyState, ErrorNotice, Input, Modal, PageHeader, Pagination, SearchBox, Select, usePagination } from '../../components/ui';
 import type { Product, ProductInput } from '../../types';
 import { downloadCsv, errorMessage } from '../../utils/formatters';
 import { useBusiness } from '../settings/businessSettings';
@@ -29,6 +29,7 @@ export function ProductsView({ products, onCreateProduct, onUpdateProduct, onCus
   const categories = [...new Set([...settings.catalog.categories, ...products.map(p => p.category || '').filter(Boolean)])].sort();
   const filtered = products.filter(p => (filter === 'all' || (filter === 'active' ? p.active : !p.active)) && (!category || p.category === category) && (p.name + ' ' + (p.category || '')).toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => sort === 'price' ? Number(a.current_price) - Number(b.current_price) : a.name.localeCompare(b.name));
+  const pages = usePagination(filtered, JSON.stringify([filter, category, sort, search]));
   const open = (product: Product | 'new') => {
     setEditing(product); setError(null);
     setName(product === 'new' ? '' : product.name);
@@ -67,7 +68,7 @@ export function ProductsView({ products, onCreateProduct, onUpdateProduct, onCus
       <Select aria-label="Sort catalog" value={sort} onChange={e => setSort(e.target.value)}><option value="name">Name A–Z</option><option value="price">Price: low to high</option></Select>
     </div>
     {!filtered.length ? <EmptyState icon={<Package size={28} />} title={search || category ? 'No matching products' : filter === 'archived' ? 'Nothing archived' : 'Your catalog starts here'} description={search || category ? 'Try another name or clear the filters.' : filter === 'archived' ? 'Archived products will appear here. You can restore them anytime.' : 'Add the items you sell, their units, and your current prices.'} action={search || category ? <Button variant="secondary" onClick={() => { setSearch(''); setCategory(''); }}>Clear filters</Button> : filter !== 'archived' ? <Button onClick={() => open('new')}>Add your first product</Button> : undefined} /> :
-      <div className="records">{filtered.map((product, i) => <div key={product.id} className={'record-row ' + (!product.active ? 'archived' : '')}>
+      <div className="records">{pages.items.map((product, i) => <div key={product.id} className={'record-row ' + (!product.active ? 'archived' : '')}>
         <div className={'item-icon ' + ['tonal', 'tonal-peach', 'tonal-lavender', 'tonal-sky'][i % 4]}><Package size={21} aria-hidden="true" /></div>
         <div className="record-title"><strong>{product.name}</strong><small>{product.category || 'Uncategorized'} · Sold by {product.unit}</small></div>
         {!product.active && <Badge>Archived</Badge>}
@@ -76,7 +77,8 @@ export function ProductsView({ products, onCreateProduct, onUpdateProduct, onCus
           {product.active ? <Button variant="ghost" className="icon-button" aria-label={'Archive ' + product.name} onClick={() => { setArchive(product); setActionError(null); }}><Archive size={18} /></Button> : <Button variant="secondary" size="sm" disabled={busy} onClick={() => changeActive(product, true)}><RotateCcw size={16} aria-hidden="true" />Restore</Button>}
         </div>
       </div>)}</div>}
-    <p className="list-caption"><span>{filtered.length} of {products.length} products</span><span>Price changes apply to new orders.</span></p>
+    <Pagination {...pages} />
+    <p className="list-caption"><span>{filtered.length} of {products.length} products match</span><span>Price changes apply to new orders.</span></p>
     <Modal isOpen={!!editing} onClose={() => setEditing(null)} title={editing === 'new' ? 'Add a product' : 'Edit product'} busy={busy}>
       <form className="stack" onSubmit={save}>
         <ErrorNotice message={error} />

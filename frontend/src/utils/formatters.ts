@@ -1,5 +1,11 @@
+const currencyFormatters = new Map<string, Intl.NumberFormat>();
 export function formatCurrency(amount: number, currency = 'INR'): string {
-  return new Intl.NumberFormat('en-IN', { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number.isFinite(amount) ? amount : 0);
+  let formatter = currencyFormatters.get(currency);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat('en-IN', { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    currencyFormatters.set(currency, formatter);
+  }
+  return formatter.format(Number.isFinite(amount) ? amount : 0);
 }
 export function localDate(date = new Date()): string {
   return String(date.getFullYear()) + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');

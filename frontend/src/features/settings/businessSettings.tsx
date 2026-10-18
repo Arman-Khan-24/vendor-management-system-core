@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect } from 'react';
+import { createContext, useContext, useEffect, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import type { Business, BusinessSettings } from '../../types';
 import { formatCurrency } from '../../utils/formatters';
@@ -34,7 +34,8 @@ const BusinessContext = createContext<{ business: Business | null; settings: Bus
 });
 
 export function BusinessProvider({ business, children }: { business: Business | null; children: ReactNode }) {
-  const settings = getSettings(business);
+  const settings = useMemo(() => getSettings(business), [business]);
+  const value = useMemo(() => ({ business, settings, money: (amount: number | string | null | undefined) => formatCurrency(Number(amount), business?.currency || 'INR') }), [business, settings]);
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     const apply = () => {
@@ -46,6 +47,6 @@ export function BusinessProvider({ business, children }: { business: Business | 
     document.title = business ? business.name + ' · ' + settings.branding.appName : 'OrderLedger';
     return () => media.removeEventListener('change', apply);
   }, [settings.branding.theme, settings.branding.accent, settings.branding.appName, business?.name]);
-  return <BusinessContext.Provider value={{ business, settings, money: (amount) => formatCurrency(Number(amount), business?.currency || 'INR') }}>{children}</BusinessContext.Provider>;
+  return <BusinessContext.Provider value={value}>{children}</BusinessContext.Provider>;
 }
 export const useBusiness = () => useContext(BusinessContext);

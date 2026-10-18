@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { ArrowUpRight, BarChart3, BookOpen, ChevronDown, CircleHelp, CreditCard, LayoutDashboard, LogOut, MoreHorizontal, Package, Plus, ReceiptText, Settings2, ShoppingBag, Users } from 'lucide-react';
+import { ArrowUpRight, BarChart3, BookOpen, ChevronDown, CircleHelp, CreditCard, LayoutDashboard, LogOut, MoreHorizontal, Package, Plus, ReceiptText, Search, Settings2, ShoppingBag, Users } from 'lucide-react';
 import { Button, Modal } from '../ui';
 import { useBusiness } from '../../features/settings/businessSettings';
 
@@ -17,6 +17,8 @@ export function AppShell({ currentTab, onSelectTab, onOpenNewOrder, userName = '
   const { business, settings } = useBusiness();
   const [moreOpen, setMoreOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
   const nav = [
     { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
     { id: 'orders', label: 'Orders', icon: ShoppingBag },
@@ -28,6 +30,8 @@ export function AppShell({ currentTab, onSelectTab, onOpenNewOrder, userName = '
     { id: 'settings', label: 'Settings', icon: Settings2 },
   ];
   const select = (id: string) => { setMoreOpen(false); onSelectTab(id); };
+  const matches = nav.filter(item => item.label.toLowerCase().includes(search.trim().toLowerCase()));
+  const searchOpen = searchFocused && search.trim().length > 0;
   const logo = <div className="brand-symbol">{business?.logo_url ? <img src={business.logo_url} alt="" referrerPolicy="no-referrer" onError={e => { e.currentTarget.style.display = 'none'; }} /> : <BookOpen size={24} strokeWidth={1.8} aria-hidden="true" />}</div>;
   const navButtons = (mobile = false) => nav.map(({ id, label, icon: Icon }) =>
     <button key={id} type="button" className={'nav-item ' + (currentTab === id ? 'selected' : '')} aria-current={currentTab === id ? 'page' : undefined} onClick={() => select(id)}>
@@ -48,9 +52,16 @@ export function AppShell({ currentTab, onSelectTab, onOpenNewOrder, userName = '
     </aside>
     <div className="workspace-content">
       <header className="topbar">
-        <div className="desktop-breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{nav.find(n => n.id === currentTab)?.label}</strong></div>
+      <div className="workspace-search" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchFocused(false); }}>
+        <div className="workspace-search-symbol"><Search size={18} aria-hidden="true" /></div>
+        <form onSubmit={event => { event.preventDefault(); if (matches[0]) { select(matches[0].id); setSearch(''); setSearchFocused(false); } }}>
+          <input type="search" aria-label="Find a workspace page" aria-expanded={searchOpen} aria-controls={searchOpen ? 'workspace-search-results' : undefined} placeholder="Find a page…" value={search} onFocus={() => setSearchFocused(true)} onChange={event => { setSearch(event.target.value); setSearchFocused(true); }} onKeyDown={event => { if (event.key === 'Escape') { setSearch(''); setSearchFocused(false); } }} />
+          <span className="workspace-search-location">In: <strong>{nav.find(n => n.id === currentTab)?.label}</strong></span>
+        </form>
+        {searchOpen && <div className="workspace-search-results" id="workspace-search-results">{matches.length ? matches.map(({ id, label, icon: Icon }) => <button type="button" key={id} onClick={() => { select(id); setSearch(''); setSearchFocused(false); }}><Icon size={18} aria-hidden="true" />{label}<ArrowUpRight size={16} aria-hidden="true" /></button>) : <p>No matching pages. Try “Orders” or “Catalog”.</p>}</div>}
+      </div>
         <button className="mobile-brand" type="button" onClick={() => setMoreOpen(true)}>{logo}<span>{business?.name}</span><ChevronDown size={16} aria-hidden="true" /></button>
-        <div className="topbar-actions"><Button variant="ghost" className="icon-button" aria-label="Workspace help" onClick={() => setHelpOpen(true)}><CircleHelp size={20} /></Button><Button size="sm" onClick={onOpenNewOrder}><Plus size={18} aria-hidden="true" />New order</Button></div>
+        <div className="topbar-actions"><Button variant="ghost" className="icon-button" aria-label="Workspace help" onClick={() => setHelpOpen(true)}><CircleHelp size={20} /></Button><Button variant="ghost" className="icon-button workspace-settings-button" aria-label="Open business settings" onClick={() => select('settings')}><Settings2 size={19} /></Button><Button size="sm" onClick={onOpenNewOrder}><Plus size={18} aria-hidden="true" />New order</Button></div>
       </header>
       <main id="main-content" className="main-content" tabIndex={-1}>{children}</main>
       <footer className="workspace-footer"><span>{settings.branding.tagline}</span><span>{business?.currency || 'INR'} · {settings.branding.appName}</span></footer>
