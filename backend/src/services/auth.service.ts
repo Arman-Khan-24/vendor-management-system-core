@@ -7,6 +7,7 @@ import { UserRepository } from '../repositories/user.repo.js';
 import { ProductRepository } from '../repositories/product.repo.js';
 import { AuthUserPayload } from '../middleware/auth.middleware.js';
 import { UserRole } from '../models/types.js';
+import { withTransaction } from '../database/connection.js';
 
 export class AuthService {
   static async registerOwnerAndBusiness(data: {
@@ -24,56 +25,57 @@ export class AuthService {
       throw new AppError('Business identifier/slug already taken. Please choose another.', 409);
     }
 
-    // Check if email exists
-    const existingUser = await UserRepository.findByEmail(data.email);
-    if (existingUser) {
-      throw new AppError('User with this email already exists', 409);
-    }
-
-    // Create Business
-    const business = await BusinessRepository.create({
-      name: data.businessName,
-      slug: data.businessSlug.toLowerCase().trim(),
-      categoryTemplate: data.categoryTemplate || 'fruits_veg',
-      phone: data.phone,
-      currency: 'INR',
-      invoiceTrigger: 'Delivered'
-    });
-
-    // Seed products from template if specified
-    if (business.category_template) {
-      const template = await BusinessRepository.getCategoryTemplate(business.category_template);
-      if (template && Array.isArray(template.seed_products) && template.seed_products.length > 0) {
-        await ProductRepository.bulkCreate(business.id, template.seed_products);
+    const email = data.email.toLowerCase().trim();
+    const passwordHash = await bcrypt.hash(data.password, 10);
+    return withTransaction(async client => {
+      // Login uses a global email. Serialize all account creation for that identity.
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [email]);
+      const existingUser = await UserRepository.findByEmail(email, client);
+      if (existingUser) {
+        throw new AppError('User with this email already exists', 409);
       }
-    }
 
-    // Hash password and create Owner user
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(data.password, salt);
+      // Create Business
+      const business = await BusinessRepository.create({
+        name: data.businessName,
+        slug: data.businessSlug.toLowerCase().trim(),
+        categoryTemplate: data.categoryTemplate || 'fruits_veg',
+        phone: data.phone,
+        currency: 'INR',
+        invoiceTrigger: 'Delivered'
+      }, client);
 
-    const user = await UserRepository.create({
-      businessId: business.id,
-      name: data.ownerName,
-      email: data.email.toLowerCase().trim(),
-      passwordHash,
-      role: 'OWNER'
+      // Seed products from template if specified
+      if (business.category_template) {
+        const template = await BusinessRepository.getCategoryTemplate(business.category_template, client);
+        if (template && Array.isArray(template.seed_products) && template.seed_products.length > 0) {
+          await ProductRepository.bulkCreate(business.id, template.seed_products, client);
+        }
+      }
+
+      const user = await UserRepository.create({
+        businessId: business.id,
+        name: data.ownerName,
+        email,
+        passwordHash,
+        role: 'OWNER'
+      }, client);
+
+      // Generate JWT
+      const token = this.generateToken({
+        userId: user.id,
+        businessId: business.id,
+        email: user.email,
+        role: user.role,
+        name: user.name
+      });
+
+      return {
+        token,
+        user: { id: user.id, name: user.name, email: user.email, role: user.role },
+        business
+      };
     });
-
-    // Generate JWT
-    const token = this.generateToken({
-      userId: user.id,
-      businessId: business.id,
-      email: user.email,
-      role: user.role,
-      name: user.name
-    });
-
-    return {
-      token,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role },
-      business
-    };
   }
 
   static async login(data: { email: string; password: string }) {
@@ -120,29 +122,31 @@ export class AuthService {
     password: string;
     role: UserRole;
   }) {
-    const existing = await UserRepository.findByEmail(email.toLowerCase().trim());
-    if (existing) {
-      throw new AppError('User with this email already exists', 409);
-    }
+    email = email.toLowerCase().trim();
+    const passwordHash = await bcrypt.hash(password, 10);
+    return withTransaction(async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [email]);
+      const existing = await UserRepository.findByEmail(email, client);
+      if (existing) {
+        throw new AppError('User with this email already exists', 409);
+      }
 
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
+      const user = await UserRepository.create({
+        businessId,
+        name,
+        email: email.toLowerCase().trim(),
+        passwordHash,
+        role
+      }, client);
 
-    const user = await UserRepository.create({
-      businessId,
-      name,
-      email: email.toLowerCase().trim(),
-      passwordHash,
-      role
+      return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        created_at: user.created_at
+      };
     });
-
-    return {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      created_at: user.created_at
-    };
   }
 
   private static generateToken(payload: AuthUserPayload): string {

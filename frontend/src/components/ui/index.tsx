@@ -46,9 +46,11 @@ export function PageHeader({ eyebrow, title, description, actions }: { eyebrow?:
 export function EmptyState({ icon, title, description, action }: { icon?: ReactNode; title: string; description: string; action?: ReactNode }) {
   return <div className="empty-state">{icon && <div className="empty-icon">{icon}</div>}<h3>{title}</h3><p>{description}</p>{action}</div>;
 }
-export function ErrorNotice({ message, retry }: { message: string | null; retry?: () => void }) {
+export function ErrorNotice({ message, retry, focus = false }: { message: string | null; retry?: () => void; focus?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (message && focus) ref.current?.focus(); }, [message, focus]);
   if (!message) return null;
-  return <div className="error-notice" role="alert"><AlertCircle size={20} aria-hidden="true" /><p>{message}</p>{retry && <Button variant="outline" size="sm" onClick={retry}>Try again</Button>}</div>;
+  return <div ref={ref} tabIndex={-1} className="error-notice" role="alert"><AlertCircle size={20} aria-hidden="true" /><p>{message}</p>{retry && <Button variant="outline" size="sm" onClick={retry}>Try again</Button>}</div>;
 }
 export function LoadingState({ label = 'Loading your workspace…' }: { label?: string }) {
   return <div className="loading-state" role="status"><LoaderCircle className="spin" size={28} aria-hidden="true" /><p>{label}</p></div>;

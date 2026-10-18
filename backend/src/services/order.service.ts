@@ -11,7 +11,8 @@ export class OrderService {
     items,
     notes,
     createdBy,
-    source = 'manual'
+    source = 'manual',
+    idempotencyKey
   }: {
     businessId: string;
     customerId: string;
@@ -19,6 +20,7 @@ export class OrderService {
     notes?: string;
     createdBy?: string;
     source?: 'manual' | 'whatsapp_text' | 'whatsapp_image';
+    idempotencyKey?: string;
   }) {
     if (!items || items.length === 0) {
       throw new AppError('Order must contain at least one item', 400);
@@ -36,7 +38,8 @@ export class OrderService {
       items,
       notes,
       createdBy,
-      source
+      source,
+      idempotencyKey
     });
   }
 

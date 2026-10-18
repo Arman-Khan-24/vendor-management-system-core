@@ -1,4 +1,5 @@
-import { query } from '../database/connection.js';
+import { pool, query } from '../database/connection.js';
+import type { PoolClient } from 'pg';
 import { Product } from '../models/types.js';
 
 export class ProductRepository {
@@ -67,13 +68,14 @@ export class ProductRepository {
 
   static async bulkCreate(
     businessId: string,
-    items: { name: string; unit: string; current_price: number }[]
+    items: { name: string; unit: string; current_price: number }[],
+    client?: PoolClient
   ): Promise<Product[]> {
     if (items.length === 0) return [];
 
     const results: Product[] = [];
     for (const item of items) {
-      const res = await query<Product>(
+      const res = await (client ?? pool).query<Product>(
         `INSERT INTO products (business_id, name, unit, current_price)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (business_id, name) DO UPDATE SET current_price = EXCLUDED.current_price

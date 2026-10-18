@@ -4,6 +4,7 @@ import { InvoiceRepository } from './invoice.repo.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { normalizeBusinessSettings } from '../services/business-settings.service.js';
 import { ReportsService } from '../services/reports.service.js';
+import { readReceipt, saveReceipt } from './write-receipt.js';
 
 export interface PaymentWithAllocations extends Payment {
   customer_name: string;
@@ -36,9 +37,9 @@ export class PaymentRepository {
   }
 
   /** Customer account payment with bounded explicit allocations or oldest-invoice-first settlement. */
-  static async recordPayment({ businessId, customerId, amount, mode = 'cash', date, reference, notes, createdBy, specificInvoiceAllocations }: {
+  static async recordPayment({ businessId, customerId, amount, mode = 'cash', date, reference, notes, createdBy, specificInvoiceAllocations, idempotencyKey }: {
     businessId: string; customerId: string; amount: number; mode?: PaymentMode; date?: string;
-    reference?: string; notes?: string; createdBy?: string;
+    reference?: string; notes?: string; createdBy?: string; idempotencyKey?: string;
     specificInvoiceAllocations?: Array<{ invoiceId: string; amount: number }>;
   }): Promise<PaymentWithAllocations> {
     if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.00001) {
@@ -47,6 +48,9 @@ export class PaymentRepository {
     return withTransaction(async client => {
       const business = await client.query('SELECT settings FROM businesses WHERE id = $1 FOR UPDATE', [businessId]);
       if (!business.rows[0]) throw new AppError('Business not found', 404);
+      const receipt = { businessId, operation: 'payment' as const, key: idempotencyKey, payload: { customerId, amount, mode, date, reference, notes, createdBy, specificInvoiceAllocations } };
+      const previous = await readReceipt<PaymentWithAllocations>(client, receipt);
+      if (previous) return previous;
       const settings = normalizeBusinessSettings(business.rows[0].settings);
       if (!settings.modules.payments) throw new AppError('Payments are disabled in business settings.', 403);
       if (!settings.billing.paymentMethods.includes(mode)) throw new AppError('This payment method is disabled in business settings.', 400);
@@ -90,8 +94,10 @@ export class PaymentRepository {
         await InvoiceRepository.refreshInvoiceStatus(client, invoice.id, businessId);
       }
       const allocations = await client.query(`${allocationSelect} WHERE pa.payment_id = $1 AND pa.business_id = $2 ORDER BY i.invoice_no`, [payment.id, businessId]);
-      return { ...payment, amount: Number(payment.amount), customer_name: customer.rows[0].name,
+      const result = { ...payment, amount: Number(payment.amount), customer_name: customer.rows[0].name,
         unallocated_amount: remainingCents / 100, allocations: allocations.rows.map(a => ({ ...a, amount: Number(a.amount) })) };
+      await saveReceipt(client, receipt, result);
+      return result;
     });
   }
 

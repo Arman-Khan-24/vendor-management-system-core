@@ -1,11 +1,14 @@
 import type { Business, BusinessPatch, Connections, Customer, CustomerInput, DashboardSummary, Invoice, Order, OrderInput, Payment, PaymentInput, Product, ProductInput, ProviderConnection, User } from '../types';
 import { downloadFile } from '../utils/formatters';
+import { pendingWrite } from './pendingWrite';
 
 const TOKEN_KEY = 'orderledger_token';
 const CONNECTION_KEY = 'orderledger_api_url';
 
 export class ApiError extends Error {
-  constructor(message: string, public status: number) { super(message); }
+  constructor(message: string, public status: number, public requestId?: string) {
+    super(message + (requestId && status >= 500 ? ' Reference: ' + requestId : ''));
+  }
 }
 export function normalizeApiUrl(value: string): string {
   const clean = value.trim().replace(/\/+$/, '');
@@ -43,7 +46,7 @@ export class ApiClient {
     if (!health.ok) throw new Error('Server setup is not ready (' + health.status + '). Check the API deployment and database migrations.');
     const readiness = await health.json().catch(() => null);
     if (readiness?.status !== 'ok' || readiness?.service !== 'OrderLedger Core API') throw new Error('This address did not return an OrderLedger API health response.');
-    if (readiness.apiVersion !== 2) throw new Error('This server is running an older or incompatible OrderLedger API. Deploy the current backend before using these settings.');
+    if (readiness.apiVersion !== 2 || readiness.capabilities?.idempotentWrites !== true) throw new Error('This server is running an older or incompatible OrderLedger API. Deploy the current backend before using these settings.');
     const response = await fetch(base + '/api/auth/templates', { signal: AbortSignal.timeout(10000), credentials: 'omit', redirect: 'error' });
     if (!response.ok) throw new Error('Server returned ' + response.status + '. Check the address and database connection.');
     const data = await response.json();
@@ -60,8 +63,9 @@ export class ApiClient {
     try {
       response = await fetch(base + endpoint, { ...options, headers, credentials: 'omit', redirect: 'error', signal: options.signal || AbortSignal.timeout(20000) });
     } catch (error) {
-      if (error instanceof Error && error.name === 'TimeoutError') throw new ApiError('The server took too long to respond. Check your connection, then refresh before retrying a save.', 0);
-      throw new ApiError('Cannot reach the server. Check your internet connection and API address in Connections.', 0);
+      const retryHint = headers.has('Idempotency-Key') ? ' Your submission is unconfirmed. Retry with the same details; it will not be recorded twice.' : '';
+      if (error instanceof Error && error.name === 'TimeoutError') throw new ApiError('The server took too long to respond.' + (retryHint || ' Check your connection, then refresh before retrying a save.'), 0);
+      throw new ApiError('Cannot reach the server. Check your internet connection and server address.' + retryHint, 0);
     }
     if (!response.ok) {
       const body = await response.json().catch(() => null);
@@ -77,7 +81,9 @@ export class ApiClient {
           return [path, typeof d?.message === 'string' ? d.message : ''].filter(Boolean).join(': ');
         }).filter(Boolean).join('. ');
       }
-      throw new ApiError(message, response.status);
+      const reference = response.headers.get('X-Request-ID');
+      const requestId = reference && /^[a-f0-9-]{36}$/i.test(reference) ? reference : undefined;
+      throw new ApiError(message, response.status, requestId);
     }
     return response;
   }
@@ -87,6 +93,31 @@ export class ApiClient {
     try { return await response.json() as T; } catch { throw new ApiError('The server returned an unreadable response. Check the API address.', response.status); }
   }
   private static write<T>(endpoint: string, body: unknown, method = 'POST') { return this.request<T>(endpoint, { method, body: JSON.stringify(body) }); }
+  private static async writeOnce<T>(endpoint: string, body: unknown): Promise<T> {
+    const base = this.getBase();
+    const token = localStorage.getItem(TOKEN_KEY);
+    let identity: { userId: string; businessId: string };
+    try {
+      identity = JSON.parse(atob(token!.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (!identity.userId || !identity.businessId) throw new Error();
+    } catch { throw new ApiError('Your session has expired. Sign in again.', 401); }
+    const scope = JSON.stringify([base, identity.businessId, identity.userId, endpoint]);
+    return pendingWrite(scope, body, async key => {
+      let response: Response;
+      try {
+        response = await fetch(base.replace(/\/api$/, '') + '/health', { signal: AbortSignal.timeout(10000), credentials: 'omit', redirect: 'error', cache: 'no-store' });
+      } catch { throw new ApiError('Cannot confirm the server is ready. Your submission has not been sent. Check your connection and retry.', 0); }
+      if (!response.ok) throw new ApiError('The server or database is not ready. Your submission has not been sent. Please retry shortly.', 503);
+      const health = await response.json().catch(() => null);
+      if (health?.service !== 'OrderLedger Core API' || health?.status !== 'ok' || health?.apiVersion !== 2 || health?.capabilities?.idempotentWrites !== true) {
+        throw new ApiError('This server needs an update before it can safely save orders and payments. Deploy the current OrderLedger backend, then retry.', 503);
+      }
+      if (this.getBase() !== base || localStorage.getItem(TOKEN_KEY) !== token) throw new ApiError('Your session changed. Reload the workspace before saving.', 401);
+      const result = await this.request<T>(endpoint, { method: 'POST', body: JSON.stringify(body), headers: { 'Idempotency-Key': key } });
+      if (!result || typeof (result as { id?: unknown }).id !== 'string') throw new ApiError('The server did not confirm the saved record. Retry with the same details.', 0);
+      return result;
+    });
+  }
   private static async listAll<T extends { id: string }>(endpoint: string, params: Record<string, unknown> = {}): Promise<T[]> {
     const records: T[] = [];
     const seen = new Set<string>();
@@ -125,7 +156,7 @@ export class ApiClient {
   static getDashboard() { return this.request<DashboardSummary>('/dashboard/summary'); }
   static getOrders(params?: { status?: string; customerId?: string }) { return this.listAll<Order>('/orders', params); }
   static getOrder(id: string) { return this.request<Order>('/orders/' + id); }
-  static createOrder(body: OrderInput) { return this.write<Order>('/orders', body); }
+  static createOrder(body: OrderInput) { return this.writeOnce<Order>('/orders', body); }
   static updateOrderStatus(id: string, status: string) { return this.write<Order>('/orders/' + id + '/status', { status }, 'PATCH'); }
   static getCustomers(search?: string) { return this.listAll<Customer>('/customers', { search, all: true }); }
   static getCustomer(id: string) { return this.request<Customer>('/customers/' + id); }
@@ -147,5 +178,5 @@ export class ApiClient {
   static getInvoices(params?: { status?: string }) { return this.listAll<Invoice>('/invoices', params); }
   static getInvoice(id: string) { return this.request<Invoice & { items?: any[] }>('/invoices/' + id); }
   static getPayments() { return this.listAll<Payment>('/payments'); }
-  static recordPayment(body: PaymentInput) { return this.write<Payment>('/payments', body); }
+  static recordPayment(body: PaymentInput) { return this.writeOnce<Payment>('/payments', body); }
 }

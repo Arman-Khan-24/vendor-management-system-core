@@ -40,7 +40,7 @@ export function RecordPaymentModal({ customers, initialCustomerId, onClose, onSu
   const outstanding = Math.max(0, Number(customer?.outstanding_balance || 0));
   const credit = Math.max(0, Number(amount || 0) - outstanding);
   const submit = async (event: React.FormEvent) => {
-    event.preventDefault(); setBusy(true); setError(null);
+    event.preventDefault(); if (busy) return; setBusy(true); setError(null);
     try {
       if (!customerId || !customer) throw new Error('Choose a customer.');
       if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) throw new Error('Enter an amount greater than zero.');
@@ -50,9 +50,9 @@ export function RecordPaymentModal({ customers, initialCustomerId, onClose, onSu
   };
   return <Modal isOpen title="Record a payment" onClose={onClose} busy={busy}>
     {!customers.length ? <EmptyState title="Add a customer first" description="Payments are linked to a customer account." action={<Button onClick={onSetup}>Open customers</Button>} /> :
-      <form className="stack" onSubmit={submit}><ErrorNotice message={error} /><Select label="Customer" value={customerId} required onChange={e => setCustomerId(e.target.value)}><option value="" disabled>Choose a customer</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}{!c.active ? ' (archived)' : ''}</option>)}</Select>
+      <form className="stack" onSubmit={submit}><ErrorNotice message={error} focus /><Select label="Customer" value={customerId} required onChange={e => setCustomerId(e.target.value)}><option value="" disabled>Choose a customer</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}{!c.active ? ' (archived)' : ''}</option>)}</Select>
         <div className="form-note row between"><span>Current balance due</span><strong>{money(outstanding)}</strong></div>
-        <Input label="Amount received" type="number" min="0.01" step="0.01" value={amount} required onChange={e => setAmount(e.target.value)} placeholder="0.00" autoFocus />
+        <Input label="Amount received" type="number" inputMode="decimal" min="0.01" step="0.01" value={amount} required onChange={e => setAmount(e.target.value)} placeholder="0.00" autoFocus />
         <div className="form-grid"><Input label="Payment date" type="date" max={localDate()} value={date} required onChange={e => setDate(e.target.value)} /><Select label="Payment method" value={mode} onChange={e => setMode(e.target.value as PaymentMode)}>{settings.billing.paymentMethods.map(m => <option value={m} key={m}>{paymentLabels[m]}</option>)}</Select></div>
         <Input label="Reference number" value={reference} maxLength={100} onChange={e => setReference(e.target.value)} placeholder="UPI, bank or cheque reference (optional)" />
         <Textarea label="Notes" rows={2} value={notes} maxLength={500} onChange={e => setNotes(e.target.value)} placeholder="Optional" />

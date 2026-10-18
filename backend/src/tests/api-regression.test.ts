@@ -1,6 +1,7 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Server } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { startIsolatedPostgres } from './helpers/isolated-postgres.js';
 
 let database: Awaited<ReturnType<typeof startIsolatedPostgres>>;
@@ -32,14 +33,14 @@ async function invoiceFor(orderId: string) {
   return result.data;
 }
 
-async function request(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST', token = owner?.token) {
+async function request(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST', token = owner?.token, headers = {}) {
   const response = await fetch(base + path, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers },
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });
   const data: any = await response.json();
-  return { status: response.status, data };
+  return { status: response.status, data, headers: response.headers };
 }
 
 before(async () => {
@@ -339,4 +340,109 @@ test('PDF endpoint returns a real document without a browser runtime', async () 
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type') ?? '', /application\/pdf/);
   assert.equal(Buffer.from(await response.arrayBuffer()).subarray(0, 5).toString(), '%PDF-');
+});
+
+test('concurrent retry keys create one order and reject a different payload', async () => {
+  const { customer, product } = await fixture();
+  const body = { customerId: customer.id, items: [{ productId: product.id, quantity: 1 }] };
+  const headers = { 'Idempotency-Key': randomUUID() };
+  const results = await Promise.all(Array.from({ length: 8 }, () => request('/api/orders', body, 'POST', owner.token, headers)));
+  results.forEach(result => assert.equal(result.status, 201, JSON.stringify(result.data)));
+  assert.equal(new Set(results.map(result => result.data.id)).size, 1);
+  assert.deepEqual(results[0].data, results[7].data);
+  assert.equal((await pool.query('SELECT id FROM orders WHERE customer_id = $1', [customer.id])).rowCount, 1);
+  assert.equal((await request('/api/orders', { ...body, notes: 'Different order' }, 'POST', owner.token, headers)).status, 409);
+  assert.equal((await request('/api/orders', body, 'POST', owner.token, { 'Idempotency-Key': 'invalid' })).status, 400);
+  // A new confirmed submission, even with identical details, is a separate order.
+  assert.notEqual((await request('/api/orders', body, 'POST', owner.token, { 'Idempotency-Key': randomUUID() })).data.id, results[0].data.id);
+});
+
+test('payment retries neither duplicate receipts nor allocate the money twice', async () => {
+  const { customer, product } = await fixture();
+  const invoice = await invoiceFor((await makeOrder(customer.id, product.id)).id);
+  const body = { customerId: customer.id, amount: 75, mode: 'cash' };
+  const headers = { 'Idempotency-Key': randomUUID() };
+  const results = await Promise.all(Array.from({ length: 6 }, () => request('/api/payments', body, 'POST', owner.token, headers)));
+  results.forEach(result => assert.equal(result.status, 201, JSON.stringify(result.data)));
+  assert.equal(new Set(results.map(result => result.data.id)).size, 1);
+  assert.deepEqual(results[0].data, results[5].data);
+  assert.equal((await pool.query('SELECT id FROM payments WHERE customer_id = $1', [customer.id])).rowCount, 1);
+  assert.equal(Number((await pool.query('SELECT SUM(amount) AS amount FROM payment_allocations WHERE invoice_id = $1', [invoice.id])).rows[0].amount), 75);
+  assert.equal((await request('/api/payments', { ...body, amount: 76 }, 'POST', owner.token, headers)).status, 409);
+});
+
+test('a failed receipt rolls back the financial write and the same key can retry', async () => {
+  const { customer, product } = await fixture();
+  const body = { customerId: customer.id, items: [{ productId: product.id, quantity: 1 }] };
+  const headers = { 'Idempotency-Key': randomUUID() };
+  await pool.query(`CREATE FUNCTION test_reject_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'private database detail'; END $$;
+    CREATE TRIGGER test_reject_receipt BEFORE INSERT ON write_receipts FOR EACH ROW EXECUTE FUNCTION test_reject_receipt()`);
+  try {
+    const failed = await request('/api/orders', body, 'POST', owner.token, headers);
+    assert.equal(failed.status, 500);
+    assert.match(failed.data.requestId, /^[0-9a-f-]{36}$/);
+    assert.equal(failed.headers.get('X-Request-ID'), failed.data.requestId);
+    assert.match(failed.headers.get('Access-Control-Expose-Headers') ?? '', /X-Request-ID/i);
+    assert.doesNotMatch(JSON.stringify(failed.data), /private database detail|INSERT|stack/);
+    assert.equal((await pool.query('SELECT id FROM orders WHERE customer_id = $1', [customer.id])).rowCount, 0);
+  } finally { await pool.query('DROP TRIGGER test_reject_receipt ON write_receipts; DROP FUNCTION test_reject_receipt()'); }
+  assert.equal((await request('/api/orders', body, 'POST', owner.token, headers)).status, 201);
+  assert.equal((await pool.query('SELECT id FROM orders WHERE customer_id = $1', [customer.id])).rowCount, 1);
+});
+
+test('retry keys are scoped to the business and operation', async () => {
+  const registration = await request('/api/auth/register', {
+    businessName: 'Retry Tenant', businessSlug: 'retry-tenant', categoryTemplate: 'custom',
+    ownerName: 'Retry Owner', email: 'retry-tenant@example.test', password: 'isolated-password'
+  });
+  assert.equal(registration.status, 201);
+  const other = registration.data;
+  const customer = await request('/api/customers', { name: 'Other customer', phone: '9995553331' }, 'POST', other.token);
+  const own = await fixture();
+  const headers = { 'Idempotency-Key': randomUUID() };
+  const paymentA = await request('/api/payments', { customerId: own.customer.id, amount: 1 }, 'POST', owner.token, headers);
+  const paymentB = await request('/api/payments', { customerId: customer.data.id, amount: 1 }, 'POST', other.token, headers);
+  assert.equal(paymentA.status, 201);
+  assert.equal(paymentB.status, 201);
+  assert.notEqual(paymentA.data.id, paymentB.data.id);
+  assert.equal(paymentB.data.business_id, other.business.id);
+  const order = await request('/api/orders', { customerId: own.customer.id, items: [{ productId: own.product.id, quantity: 1 }] }, 'POST', owner.token, headers);
+  assert.equal(order.status, 201);
+});
+
+test('signup rolls back the business and seeded products when owner creation fails', async () => {
+  const body = { businessName: 'Atomic signup', businessSlug: 'atomic-signup', categoryTemplate: 'fruits_veg', ownerName: 'Atomic Owner', email: 'atomic@example.test', password: 'isolated-password' };
+  const before = Number((await pool.query('SELECT COUNT(*) FROM products')).rows[0].count);
+  await pool.query(`CREATE FUNCTION test_reject_owner() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'injected owner failure'; END $$;
+    CREATE TRIGGER test_reject_owner BEFORE INSERT ON users FOR EACH ROW EXECUTE FUNCTION test_reject_owner()`);
+  try {
+    assert.equal((await request('/api/auth/register', body)).status, 500);
+    assert.equal((await pool.query('SELECT id FROM businesses WHERE slug = $1', [body.businessSlug])).rowCount, 0);
+    assert.equal(Number((await pool.query('SELECT COUNT(*) FROM products')).rows[0].count), before);
+  } finally { await pool.query('DROP TRIGGER test_reject_owner ON users; DROP FUNCTION test_reject_owner()'); }
+  assert.equal((await request('/api/auth/register', body)).status, 201);
+});
+
+test('simultaneous signup for the same normalized email creates one account and business', async () => {
+  const results = await Promise.all(['email-race-a', 'email-race-b'].map(businessSlug => request('/api/auth/register', {
+    businessName: 'Email race', businessSlug, categoryTemplate: 'custom', ownerName: 'Owner',
+    email: 'Race@example.test', password: 'isolated-password'
+  })));
+  assert.deepEqual(results.map(result => result.status).sort(), [201, 409]);
+  assert.equal((await pool.query("SELECT id FROM users WHERE email = 'race@example.test'")).rowCount, 1);
+  assert.equal((await pool.query("SELECT id FROM businesses WHERE slug IN ('email-race-a', 'email-race-b')")).rowCount, 1);
+});
+
+test('parse failures have a unique server reference, ignoring caller supplied IDs', async () => {
+  const results = await Promise.all([1, 2].map(() => fetch(base + '/api/auth/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Request-ID': 'untrusted-input' }, body: '{broken'
+  })));
+  assert.equal(results[0].status, 400);
+  assert.notEqual(results[0].headers.get('X-Request-ID'), results[1].headers.get('X-Request-ID'));
+  const body: any = await results[0].json();
+  assert.equal(body.requestId, results[0].headers.get('X-Request-ID'));
+  assert.notEqual(body.requestId, 'untrusted-input');
+  assert.equal((await request('/health')).data.capabilities.idempotentWrites, true);
 });

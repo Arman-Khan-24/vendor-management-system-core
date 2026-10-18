@@ -18,7 +18,7 @@ export function NewOrderModal({ isOpen, onClose, customers, products, onSubmit, 
   const tax = Math.round(subtotal * settings.billing.taxRate) / 100;
   const update = (key: string, data: Partial<typeof items[number]>) => setItems(list => list.map(i => i.key === key ? { ...i, ...data } : i));
   const submit = async (event: React.FormEvent) => {
-    event.preventDefault(); setBusy(true); setError(null);
+    event.preventDefault(); if (busy) return; setBusy(true); setError(null);
     try {
       if (!customerId || !availableCustomers.some(c => c.id === customerId)) throw new Error('Choose an active customer.');
       if (items.some(i => !i.productId || !Number.isFinite(Number(i.quantity)) || Number(i.quantity) <= 0)) throw new Error('Each product needs a quantity greater than zero.');
@@ -31,14 +31,14 @@ export function NewOrderModal({ isOpen, onClose, customers, products, onSubmit, 
   return <Modal isOpen={isOpen} onClose={onClose} title="Create an order" wide busy={busy}>
     {!ready ? <EmptyState icon={<ShoppingBag size={28} />} title={!availableProducts.length ? 'Add your products first' : 'Add your first customer'} description="An order needs an active customer and at least one product." action={<Button onClick={() => { onClose(); onSetup(!availableProducts.length ? 'products' : 'customers'); }}>{!availableProducts.length ? 'Open catalog' : 'Add a customer'}</Button>} /> :
       <form className="stack" onSubmit={submit}>
-        <ErrorNotice message={error} />
+        <ErrorNotice message={error} focus />
         <Select label="Customer" value={customerId} required onChange={e => setCustomerId(e.target.value)}><option value="" disabled>Choose a customer</option>{availableCustomers.map(c => <option key={c.id} value={c.id}>{c.name} · {c.phone}</option>)}</Select>
         <div className="row between"><h3>Order items</h3><Button variant="ghost" size="sm" disabled={items.length >= availableProducts.length} onClick={() => setItems(list => [...list, { key: crypto.randomUUID(), productId: availableProducts.find(p => !list.some(i => i.productId === p.id))?.id || '', quantity: '1' }])}><Plus size={17} aria-hidden="true" />Add item</Button></div>
         {items.map((item, index) => {
           const product = availableProducts.find(p => p.id === item.productId);
           return <div key={item.key} className="order-line"><div className="order-line-fields">
             <Select label={'Product ' + (index + 1)} value={item.productId} required onChange={e => update(item.key, { productId: e.target.value })}>{availableProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</Select>
-            <Input label={'Quantity ' + (index + 1)} type="number" step="0.01" min="0.01" value={item.quantity} required onChange={e => update(item.key, { quantity: e.target.value })} />
+            <Input label={'Quantity ' + (index + 1)} type="number" inputMode="decimal" step="0.01" min="0.01" value={item.quantity} required onChange={e => update(item.key, { quantity: e.target.value })} />
             <Button className="icon-button" variant="ghost" aria-label={'Remove item ' + (index + 1)} disabled={items.length === 1} onClick={() => setItems(list => list.filter(i => i.key !== item.key))}><Trash2 size={18} /></Button>
           </div><div className="order-line-total"><span>{money(product?.current_price)} / {product?.unit} · Quantity in {product?.unit}</span><strong>{money(Number(product?.current_price || 0) * Number(item.quantity || 0))}</strong></div></div>;
         })}

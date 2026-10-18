@@ -1,5 +1,5 @@
 import EmbeddedPostgres from 'embedded-postgres';
-import { mkdtemp, realpath } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { createServer } from 'node:net';
@@ -26,7 +26,8 @@ export async function startIsolatedPostgres() {
     user: 'postgres',
     password: 'disposable-test-password',
     port,
-    persistent: false,
+    // We clean up with bounded retries: Windows can briefly retain a stopped process's files.
+    persistent: true,
     initdbFlags: ['--encoding=UTF8', '--locale=C'],
     postgresFlags: ['-h', '127.0.0.1'],
     onLog: (line: unknown) => { logs.push(String(line)); },
@@ -43,5 +44,9 @@ export async function startIsolatedPostgres() {
   process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = url;
   process.env.JWT_SECRET = 'isolated-orderledger-test-secret-not-for-deployment';
-  return { url, stop: () => postgres.stop() as Promise<void> };
+  return { url, stop: async () => {
+    await postgres.stop();
+    if (!resolvedDirectory.startsWith(resolve(tempRoot) + sep + 'orderledger-test-')) throw new Error('Unsafe test cleanup path');
+    await rm(resolvedDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } };
 }

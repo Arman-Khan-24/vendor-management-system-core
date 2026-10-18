@@ -1,4 +1,5 @@
-import { query } from '../database/connection.js';
+import { pool, query } from '../database/connection.js';
+import type { PoolClient } from 'pg';
 import { User, UserRole } from '../models/types.js';
 
 export class UserRepository {
@@ -10,8 +11,8 @@ export class UserRepository {
     return res.rows[0] || null;
   }
 
-  static async findByEmail(email: string): Promise<User | null> {
-    const res = await query<User>('SELECT * FROM users WHERE email = $1', [email]);
+  static async findByEmail(email: string, client?: PoolClient): Promise<User | null> {
+    const res = await (client ?? pool).query<User>('SELECT * FROM users WHERE email = $1', [email]);
     return res.rows[0] || null;
   }
 
@@ -37,8 +38,8 @@ export class UserRepository {
     email: string;
     passwordHash: string;
     role: UserRole;
-  }): Promise<User> {
-    const res = await query<User>(
+  }, client?: PoolClient): Promise<User> {
+    const res = await (client ?? pool).query<User>(
       `INSERT INTO users (business_id, name, email, password_hash, role)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,

@@ -34,7 +34,8 @@ router.post('/', validateBody(recordPaymentSchema), async (req, res, next) => {
       reference: req.body.reference,
       notes: req.body.notes,
       createdBy: req.user!.userId,
-      specificInvoiceAllocations: req.body.specificInvoiceAllocations
+      specificInvoiceAllocations: req.body.specificInvoiceAllocations,
+      idempotencyKey: req.get('Idempotency-Key')
     });
     res.status(201).json(payment);
   } catch (err) {

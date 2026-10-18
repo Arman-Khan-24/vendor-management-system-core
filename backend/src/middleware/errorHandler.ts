@@ -10,8 +10,20 @@ export class AppError extends Error {
 }
 
 export function errorHandler(err: any, req: Request, res: Response, next: NextFunction): void {
+  if (res.headersSent) { next(err); return; }
+  const reply = (status: number, message: string) => {
+    if (status >= 500) {
+      // Never log bodies, credentials, raw URLs, SQL, or database error details.
+      console.error('Request failed', {
+        requestId: res.locals.requestId, method: req.method, route: req.route?.path,
+        name: err?.name, code: err?.code,
+        frames: typeof err?.stack === 'string' ? err.stack.split('\n').filter((line: string) => /^\s+at .+:\d+:\d+\)?$/.test(line)).slice(0, 5) : []
+      });
+    }
+    res.status(status).json({ error: message, requestId: res.locals.requestId });
+  };
   if (err instanceof AppError) {
-    res.status(err.statusCode).json({ error: err.message });
+    reply(err.statusCode, err.message);
     return;
   }
 
@@ -20,40 +32,36 @@ export function errorHandler(err: any, req: Request, res: Response, next: NextFu
     const message = err.constraint === 'uq_products_business_name' ? 'A product with this name already exists, including archived products.'
       : err.constraint === 'uq_customers_business_phone' ? 'A customer with this phone number already exists, including archived customers.'
       : 'A record with these details already exists.';
-    res.status(409).json({ error: message });
+    reply(409, message);
     return;
   }
 
   // Handle postgres foreign key constraint error
   if (err && err.code === '23503') {
-    res.status(400).json({ error: 'The selected record is unavailable for this business. Refresh and select it again.' });
+    reply(400, 'The selected record is unavailable for this business. Refresh and select it again.');
     return;
   }
 
   if (['22P02', '22003', '22007', '22008', '23514', '23502'].includes(err?.code)) {
-    res.status(400).json({ error: err.code === '22003' ? 'The amount or quantity exceeds the supported range.' : 'Some values are invalid. Check amounts, dates, and selected records.' });
+    reply(400, err.code === '22003' ? 'The amount or quantity exceeds the supported range.' : 'Some values are invalid. Check amounts, dates, and selected records.');
     return;
   }
   if (err?.type === 'entity.parse.failed') {
-    res.status(400).json({ error: 'The request body must contain valid JSON.' });
+    reply(400, 'The request body must contain valid JSON.');
     return;
   }
   if (err?.type === 'entity.too.large') {
-    res.status(413).json({ error: 'The request is too large.' });
+    reply(413, 'The request is too large.');
     return;
   }
   if (['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', '57P01', '57P02', '57P03', '53300', '08001', '08006'].includes(err?.code)) {
-    res.status(503).json({ error: 'The database is temporarily unavailable. Please retry shortly.' });
+    reply(503, 'The database is temporarily unavailable. Please retry shortly.');
     return;
   }
   if (['42P01', '42703'].includes(err?.code)) {
-    console.error('Database schema is not ready:', { code: err.code });
-    res.status(503).json({ error: 'Database setup is incomplete. Restart the API to apply its migrations.' });
+    reply(503, 'Database setup is incomplete. Restart the API to apply its migrations.');
     return;
   }
 
-  // Do not log database details or request bodies: they can contain customer data or keys.
-  console.error('Unhandled application error:', { name: err?.name, code: err?.code });
-
-  res.status(500).json({ error: 'Internal server error' });
+  reply(500, 'Something went wrong on the server. Please try again.');
 }

@@ -1,4 +1,5 @@
-import { getClient, query } from '../database/connection.js';
+import { getClient, pool, query } from '../database/connection.js';
+import type { PoolClient } from 'pg';
 import { Business } from '../models/types.js';
 import { AppError } from '../middleware/errorHandler.js';
 import {
@@ -35,8 +36,8 @@ export class BusinessRepository {
     phone?: string;
     currency?: string;
     invoiceTrigger?: 'Packed' | 'Delivered';
-  }): Promise<Business> {
-    const res = await query<Business>(
+  }, client?: PoolClient): Promise<Business> {
+    const res = await (client ?? pool).query<Business>(
       `INSERT INTO businesses (name, slug, category_template, phone, currency, invoice_trigger)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
@@ -155,8 +156,8 @@ export class BusinessRepository {
     }
   }
 
-  static async getCategoryTemplate(templateId: string) {
-    const res = await query('SELECT * FROM category_templates WHERE id = $1', [templateId]);
+  static async getCategoryTemplate(templateId: string, client?: PoolClient) {
+    const res = await (client ?? pool).query('SELECT * FROM category_templates WHERE id = $1', [templateId]);
     return res.rows[0] || null;
   }
 

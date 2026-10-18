@@ -39,7 +39,8 @@ router.post('/', requireRoles('OWNER', 'STAFF'), validateBody(createOrderSchema)
       items: req.body.items,
       notes: req.body.notes,
       createdBy: req.user!.userId,
-      source: 'manual'
+      source: 'manual',
+      idempotencyKey: req.get('Idempotency-Key')
     });
     res.status(201).json(order);
   } catch (err) {

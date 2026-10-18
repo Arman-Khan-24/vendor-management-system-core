@@ -3,6 +3,7 @@ import { pool, withTransaction } from '../database/connection.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { Order, OrderItem, OrderStatus, OrderStatusHistory } from '../models/types.js';
 import { normalizeBusinessSettings } from '../services/business-settings.service.js';
+import { readReceipt, saveReceipt } from './write-receipt.js';
 
 export interface OrderWithDetails extends Order {
   customer_name: string;
@@ -73,14 +74,17 @@ export class OrderRepository {
     };
   }
 
-  static async createOrderWithItems({ businessId, customerId, source = 'manual', notes, createdBy, items }: {
+  static async createOrderWithItems({ businessId, customerId, source = 'manual', notes, createdBy, items, idempotencyKey }: {
     businessId: string; customerId: string; source?: 'manual' | 'whatsapp_text' | 'whatsapp_image';
-    notes?: string; createdBy?: string; items: { productId: string; quantity: number }[];
+    notes?: string; createdBy?: string; items: { productId: string; quantity: number }[]; idempotencyKey?: string;
   }): Promise<OrderWithDetails> {
     return withTransaction(async client => {
       // The tenant lock serializes number allocation and billing-setting changes.
       const business = await client.query('SELECT settings FROM businesses WHERE id = $1 FOR UPDATE', [businessId]);
       if (!business.rows[0]) throw new AppError('Business not found', 404);
+      const receipt = { businessId, operation: 'order' as const, key: idempotencyKey, payload: { customerId, source, notes, createdBy, items } };
+      const previous = await readReceipt<OrderWithDetails>(client, receipt);
+      if (previous) return previous;
       const settings = normalizeBusinessSettings(business.rows[0].settings);
       const customer = await client.query(
         'SELECT id, credit_terms_days FROM customers WHERE id = $1 AND business_id = $2 AND active = TRUE FOR SHARE',
@@ -112,6 +116,7 @@ export class OrderRepository {
       }
       const details = (await this.findById({ orderId, businessId, client }))!;
       if (details.total_amount > 9999999999.99) throw new AppError('Order total exceeds the supported amount.', 400);
+      await saveReceipt(client, receipt, details);
       return details;
     });
   }
