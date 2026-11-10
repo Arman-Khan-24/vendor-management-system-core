@@ -28,7 +28,7 @@ Catalog, customer, order, payment, and invoice lists render 24 records per page.
 
 ### Connections
 
-**Settings → Connections** lets the owner save and test Gemini/Groq extraction and Meta WhatsApp credentials. Keys are encrypted and never returned by the API. Leaving a key blank preserves it; the explicit clear option removes it. WhatsApp starts disabled for each business. Follow [WhatsApp setup](docs/whatsapp/WHATSAPP_SETUP.md) before enabling it. The old unauthenticated mock routes are absent.
+**Settings → Connections** lets the owner save and test Gemini/Groq extraction and Meta WhatsApp credentials. Keys are encrypted and never returned by the API. Leaving a key blank preserves it; the explicit clear option removes it. WhatsApp starts disabled for each business. Follow [WhatsApp setup in Documentation](docs/DOCUMENTATION.md#meta-whatsapp-cloud-api-integration) before enabling it. The old unauthenticated mock routes are absent.
 
 The **WhatsApp inbox** shows incoming text/photo orders, extraction warnings, confirmation drafts and delivery states. Valid orders receive a summary; customers must reply YES before a ledger order is created. Owners can review unclear items and send a fresh summary. Jobs persist in PostgreSQL, including retries and processing leases; Redis is not required.
 
@@ -44,7 +44,7 @@ For a ready-to-use WhatsApp order demo with real Gemini extraction and replies c
 node start-local.mjs
 ```
 
-Open **http://127.0.0.1:5174**, click **Open localhost demo**, then **WhatsApp inbox**. This uses a temporary PostgreSQL database and the private AI configuration in `backend/.env.local`. The existing Gemini key was verified; the invalid Groq fallback is disabled. No Meta account or hosting is required. See [localhost setup](docs/whatsapp/LOCALHOST_SETUP.md) for credentials, photo testing, and restarting.
+Open **http://127.0.0.1:5174**, click **Open localhost demo**, then **WhatsApp inbox**. This uses a temporary PostgreSQL database and the private AI configuration in `backend/.env.local`. The existing Gemini key was verified; the invalid Groq fallback is disabled. No Meta account or hosting is required. See [localhost demo setup in Documentation](docs/DOCUMENTATION.md#localhost-demo-with-gemini) for credentials, photo testing, and restarting.
 
 ### Persistent business database
 
@@ -95,7 +95,7 @@ Backend: `npm ci`, `npm run build`, then `npm start` from `backend/`. The build 
 
 Frontend: run `npm ci` and `npm run build` from `frontend/`, with `VITE_API_URL` set to the HTTPS API address if the API is on another origin. Deploy `frontend/dist` to a static host; alternatively, route the site's `/api` and `/health` requests to the backend.
 
-Deploy the backend before the matching frontend. `/health` must report `apiVersion: 2`, and authenticated `/api/business` must include `settings`. A successful health response from an older API does not prove it supports the current interface. The 18 October live incident and essential CRM backlog are documented in [CRM audit](docs/audits/CRM_AUDIT_2026-10-18.md).
+Deploy the backend before the matching frontend. `/health` must report `apiVersion: 2`, and authenticated `/api/business` must include `settings`. A successful health response from an older API does not prove it supports the current interface. The 18 October live incident and essential CRM backlog are documented in [CRM roadmap in Documentation](docs/DOCUMENTATION.md#2-essential-backlog--crm-roadmap).
 
 `render.yaml` provisions the API service. Supply `DATABASE_URL`; Render generates `JWT_SECRET`. Production startup requires an explicit database URL and a secret of at least 32 characters without whitespace or known placeholder values. Generate a secret with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` and store it securely. Keep the generated secret across redeployments.
 
@@ -136,7 +136,7 @@ Then run `py -3 scripts/ui_redesign.py` from `frontend/`. It checks dashboard ac
 
 Run `py -3 scripts/ui_settings.py` against the same preview and disposable API for settings regressions. It creates a separate synthetic account and covers persistence, every theme/palette, concurrent independent changes, validation messages, connection drafts, database readiness, legacy APIs and failed saves. Its artifacts stay in the OS temporary directory under `orderledger-settings-qa`.
 
-See the [interface and performance verification](docs/audits/VERIFICATION_2026-10-18.md), [ledger verification](docs/audits/VERIFICATION_2026-10-17.md), and [original technical review with remediation status](docs/audits/TECHNICAL_REVIEW_2026-10-17.md).
+See the [technical audit and verification records in Documentation](docs/DOCUMENTATION.md#3-technical-audit--security-findings).
 
 ## Current boundaries
 
@@ -144,6 +144,6 @@ This is a configurable manual ledger foundation. It is not a complete solution f
 
 Inventory procurement/stock tracking, returns, credit notes, order cancellation, refunds, scheduled subscriptions, staff invitation, and password-reset flows are not implemented. WhatsApp supports customer-initiated text and JPEG/PNG orders; voice notes, documents and proactive template notifications are not implemented. Free-form replies require an open 24-hour customer service window. Quantities must convert exactly to two decimal places; unclear units, packaging and varieties require clarification.
 
-See [WhatsApp verification](docs/whatsapp/WHATSAPP_VERIFICATION.md) for the completed database, build, and live Gemini localhost checks, and the actual Meta delivery checks still required.
+See [WhatsApp verification details in Documentation](docs/DOCUMENTATION.md#5-verification--acceptance-history) for the completed database, build, and live Gemini localhost checks, and the actual Meta delivery checks still required.
 
 Local acceptance does not verify a production deployment, external provider delivery, or migration of a particular customer's live database.
