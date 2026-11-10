@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDecipheriv, createHash } from 'node:crypto';
-import type { AddressInfo } from 'node:net';
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config/env.js';
 import businessRoutes from '../routes/business.routes.js';
 import { errorHandler } from '../middleware/errorHandler.js';
+import { requestInProcess } from './helpers/http.js';
 import {
   DEFAULT_BUSINESS_SETTINGS, encryptConnectionKey, mergeBusinessSettings,
   normalizeBusinessConnections, normalizeBusinessSettings
@@ -122,11 +122,12 @@ test('settings routes require owner authorization and validate before database a
   app.use(express.json());
   app.use('/api/business', businessRoutes);
   app.use(errorHandler);
-  const server = app.listen(0, '127.0.0.1');
-  await new Promise<void>(resolve => server.once('listening', resolve));
-  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/business`;
+  const baseUrl = 'http://localhost/api/business';
+  const fetch = async (url: string,init?: RequestInit) => {
+    const result=await requestInProcess(app,init?.method||'GET',new URL(url).pathname,String(init?.body||''),Object.fromEntries(new Headers(init?.headers)));
+    return new Response(result.body,{status:result.status});
+  };
   const tokenFor = (role: string) => jwt.sign({ userId: 'user', businessId: 'tenant', role }, config.jwtSecret);
-  try {
     for (const role of ['STAFF', 'DELIVERY']) {
       for (const [method, path, body] of [
         ['PATCH', '', { invoiceTrigger: 'Packed' }],
@@ -164,7 +165,4 @@ test('settings routes require owner authorization and validate before database a
     assert.equal(unsupportedProvider.status, 400);
     const providerError = await unsupportedProvider.json() as { details: { path: string }[] };
     assert.equal(providerError.details[0].path, 'primary.provider');
-  } finally {
-    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-  }
 });

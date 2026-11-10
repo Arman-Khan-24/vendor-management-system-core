@@ -5,6 +5,7 @@ import type { Accent, Business, BusinessPatch, BusinessSettings, BusinessUpdate,
 import { downloadFile, errorMessage } from '../../utils/formatters';
 import { getSettings, presets } from './businessSettings';
 import { ProviderConnections, ServerConnection } from './ConnectionSettings';
+import { WhatsAppSettings } from './WhatsAppSettings';
 
 const paymentLabels: Record<PaymentMode, string> = { cash: 'Cash', upi: 'UPI', bank_transfer: 'Bank transfer', cheque: 'Cheque' };
 const sections = [
@@ -79,10 +80,11 @@ export function SettingsView({ business, user, onSave, onDirtyChange, initialSec
   const [imported, setImported] = useState<Blueprint | null>(null);
   const [saved, setSaved] = useState(false);
   const [connectionsDirty, setConnectionsDirty] = useState(false);
+  const [whatsappDirty,setWhatsAppDirty] = useState(false);
   const [serverDirty, setServerDirty] = useState(false);
   const isOwner = user.role === 'OWNER';
   const dirty = JSON.stringify(draft) !== JSON.stringify(businessDraft(business));
-  const anyDirty = dirty || connectionsDirty || serverDirty;
+  const anyDirty = dirty || connectionsDirty || serverDirty || whatsappDirty;
   useEffect(() => { setDraft(businessDraft(business)); }, [business]);
   useEffect(() => { onDirtyChange(anyDirty); return () => onDirtyChange(false); }, [anyDirty, onDirtyChange]);
   useEffect(() => { setSection(initialSection); }, [initialSection]);
@@ -128,7 +130,7 @@ export function SettingsView({ business, user, onSave, onDirtyChange, initialSec
       <div className="settings-panel">
         <ErrorNotice message={error} />
         {error && <Button variant="outline" onClick={() => setSection('connections')}><Link2 size={17} aria-hidden="true" />Check server connection</Button>}
-        <div className="stack" hidden={section !== 'connections'} style={section !== 'connections' ? { display: 'none' } : undefined}><Card className="settings-section"><ServerConnection signedIn onDirtyChange={setServerDirty} /></Card><Card className="settings-section"><ProviderConnections onDirtyChange={setConnectionsDirty} /></Card></div>
+        <div className="stack" hidden={section !== 'connections'} style={section !== 'connections' ? { display: 'none' } : undefined}><Card className="settings-section"><ServerConnection signedIn onDirtyChange={setServerDirty} /></Card><Card className="settings-section"><ProviderConnections onDirtyChange={setConnectionsDirty} /></Card><Card className="settings-section"><WhatsAppSettings onDirtyChange={setWhatsAppDirty} /></Card></div>
         {section !== 'connections' &&
           <form onSubmit={save}>
             <div className="card settings-section">
@@ -169,7 +171,7 @@ export function SettingsView({ business, user, onSave, onDirtyChange, initialSec
                 <SectionHeading title="Keep what your team needs" description="Choose the tools visible in this workspace." />
                 <Switch label="Payment collection" description="Show payment records and collection actions." checked={s.modules.payments} onChange={payments => setting('modules', { payments })} />
                 <Switch label="Business reports" description="Show sales, collections, rankings, and overdue balances." checked={s.modules.reports} onChange={reports => setting('modules', { reports })} />
-                <div className="switch-row"><div><strong>WhatsApp ordering</strong><p>Planned for a later integration. Manual orders are available now.</p></div><Badge>Coming later</Badge></div>
+                <div className="switch-row"><div><strong>WhatsApp ordering</strong><p>Manage your Meta account and ordering connection under Connections.</p></div><Badge>In Connections</Badge></div>
                 <p className="form-note" style={{ marginTop: 24 }}>Orders, catalog, customers, and invoices are the core workflow. Hiding a tool keeps its existing records.</p>
               </div>}
               {section === 'blueprint' && <div className="stack">

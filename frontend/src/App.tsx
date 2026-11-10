@@ -11,6 +11,7 @@ import { InvoicesView, InvoiceModal } from './features/invoices/InvoicesView';
 import { NewOrderModal } from './features/orders/NewOrderModal';
 import { OrderDetailModal } from './features/orders/OrderDetailModal';
 import { OrdersView } from './features/orders/OrdersView';
+import { WhatsAppInbox } from './features/orders/WhatsAppInbox';
 import { PaymentsView, RecordPaymentModal } from './features/payments/PaymentsView';
 import { ProductsView } from './features/products/ProductsView';
 import { ReportsView } from './features/reports/ReportsView';
@@ -113,6 +114,19 @@ export function App() {
   }, [user]);
   useEffect(() => { if (user) void refresh(); }, [user, refresh]);
   useEffect(() => {
+    if (!user || user.role === 'DELIVERY') return;
+    let previous: string | undefined, active = true, polling = false;
+    const poll = async () => {
+      if (polling || document.visibilityState !== 'visible') return;
+      polling = true;
+      try { const { revision } = await ApiClient.getWhatsAppRevision(); if (active) { if (previous !== undefined && previous !== revision) void refresh(); previous = revision; } }
+      catch { /* The inbox displays connection errors; normal ledger use stays available. */ }
+      finally { polling = false; }
+    };
+    void poll(); const timer = window.setInterval(() => void poll(),15000);
+    return () => { active=false;window.clearInterval(timer); };
+  },[user,refresh]);
+  useEffect(() => {
     if ((tab === 'payments' && !settings.modules.payments) || (tab === 'reports' && !settings.modules.reports)) setTab('dashboard');
   }, [settings.modules.payments, settings.modules.reports, tab]);
 
@@ -177,6 +191,7 @@ export function App() {
           {tab === 'invoices' && <InvoicesView invoices={invoices} onSelect={i => void openInvoice(i.id)} />}
           {tab === 'payments' && settings.modules.payments && <PaymentsView payments={payments} onOpenRecord={() => openPayment()} onStatement={openStatement} />}
           {tab === 'reports' && settings.modules.reports && <ReportsView onOpenStatement={openStatement} />}
+          {tab === 'whatsapp' && user.role!=='DELIVERY' && <WhatsAppInbox products={products} customers={customers} user={user} onSetup={() => { setSettingsSection('connections'); navigate('settings'); }} />}
           {tab === 'settings' && <SettingsView business={business} user={user} onSave={saveSettings} onDirtyChange={setSettingsDirty} initialSection={settingsSection} />}
         </>}
       </div>

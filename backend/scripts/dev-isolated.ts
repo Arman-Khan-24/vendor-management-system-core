@@ -4,11 +4,14 @@ const database = await startIsolatedPostgres();
 const { runMigrations } = await import('../src/database/migrator.js');
 const { createApp } = await import('../src/app.js');
 const { pool } = await import('../src/database/connection.js');
+const { startWhatsAppWorker } = await import('../src/services/whatsapp/whatsapp.worker.js');
 await runMigrations();
+const stopWorker = startWhatsAppWorker();
 const server = createApp().listen(5100, '127.0.0.1', () => {
   console.log('Disposable OrderLedger API ready at http://127.0.0.1:5100. Register a test business; all data is isolated.');
 });
 async function shutdown() {
+  await stopWorker();
   await new Promise<void>(done => server.close(() => done()));
   await pool.end();
   await database.stop();

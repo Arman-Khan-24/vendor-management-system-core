@@ -11,10 +11,14 @@ import invoiceRoutes from './routes/invoice.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import reportsRoutes from './routes/reports.routes.js';
+import whatsappRoutes from './routes/whatsapp.routes.js';
+import webhookRoutes from './routes/webhook.routes.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { checkDatabaseReadiness } from './database/migrator.js';
+import { config } from './config/env.js';
 
-export function createApp() {
+export function createApp(localDemo?: express.Router) {
+  if (localDemo && config.env==='production') throw new Error('Local demo routes are unavailable in production.');
   const app = express();
 
   // Basic security and parsing
@@ -25,7 +29,10 @@ export function createApp() {
   });
   app.use(helmet());
   app.use(cors({ origin: true, credentials: true, exposedHeaders: ['X-Request-ID'] }));
-  app.use(express.json({ limit: '1mb' }));
+  if (localDemo) app.use('/api/local-demo',express.json({limit:'8mb'}),localDemo);
+  app.use(express.json({ limit: '1mb', verify: (req,res,buffer) => {
+    if (req.url?.startsWith('/webhooks/whatsapp/')) (res as any).locals.rawBody = Buffer.from(buffer);
+  } }));
   app.use(express.urlencoded({ limit: '1mb', extended: true }));
 
   // Health check endpoint
@@ -48,10 +55,8 @@ export function createApp() {
   app.use('/api/payments', paymentRoutes);
   app.use('/api/dashboard', dashboardRoutes);
   app.use('/api/reports', reportsRoutes);
-  // Integration is deferred. Never mount the unauthenticated mock history or ingestion routes.
-  app.use(['/api/whatsapp', '/webhooks/whatsapp'], (req, res) => {
-    res.status(503).json({ error: 'WhatsApp integration is not enabled.', code: 'INTEGRATION_UNAVAILABLE' });
-  });
+  app.use('/api/whatsapp',whatsappRoutes);
+  app.use('/webhooks/whatsapp',webhookRoutes);
 
   app.use((req, res) => { res.status(404).json({ error: 'API route not found.' }); });
 

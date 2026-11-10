@@ -328,10 +328,10 @@ test('health reports pending migrations and becomes ready only when all are reco
   assert.equal((await request('/health', undefined, 'GET', '')).status, 200);
 });
 
-test('deferred WhatsApp endpoints expose neither message history nor ingestion', async () => {
-  assert.equal((await request('/api/whatsapp/messages', undefined, 'GET', '')).status, 503);
-  assert.equal((await request('/api/whatsapp/clear', {}, 'POST', '')).status, 503);
-  assert.equal((await request('/webhooks/whatsapp', {}, 'POST', '')).status, 503);
+test('WhatsApp history requires authentication and mock ingestion is absent', async () => {
+  assert.equal((await request('/api/whatsapp/messages', undefined, 'GET', '')).status, 401);
+  assert.equal((await request('/api/whatsapp/clear', {}, 'POST', '')).status, 401);
+  assert.equal((await request('/webhooks/whatsapp', {}, 'POST', '')).status, 404);
 });
 
 test('PDF endpoint returns a real document without a browser runtime', async () => {

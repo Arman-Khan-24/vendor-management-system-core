@@ -28,13 +28,25 @@ Catalog, customer, order, payment, and invoice lists render 24 records per page.
 
 ### Connections
 
-**Settings → Connections** lets the owner edit primary/fallback provider, endpoint, model, and API key. Saved keys are encrypted and never returned by the API. Leaving a key blank preserves it; the explicit clear option removes it. These are stored settings for future integration: **AI ingestion and WhatsApp are not active**. WhatsApp and mock-message routes return HTTP 503.
+**Settings → Connections** lets the owner save and test Gemini/Groq extraction and Meta WhatsApp credentials. Keys are encrypted and never returned by the API. Leaving a key blank preserves it; the explicit clear option removes it. WhatsApp starts disabled for each business. Follow [WhatsApp setup](WHATSAPP_SETUP.md) before enabling it. The old unauthenticated mock routes are absent.
+
+The **WhatsApp inbox** shows incoming text/photo orders, extraction warnings, confirmation drafts and delivery states. Valid orders receive a summary; customers must reply YES before a ledger order is created. Owners can review unclear items and send a fresh summary. Jobs persist in PostgreSQL, including retries and processing leases; Redis is not required.
 
 The backend API address is a browser/device setting, also available on the sign-in screen. A final `/api` is optional; blank uses the website's `/api` address. Use HTTPS for a remote server. Test the connection before signing in; changing servers clears the current login.
 
 Database credentials, JWT secrets, and hosting settings belong in the server environment. Keep `JWT_SECRET` stable: it also protects stored provider keys. If it is rotated, users must sign in again and provider keys must be re-entered before future integration use.
 
 ## Run locally
+
+For a ready-to-use WhatsApp order demo with real Gemini extraction and replies captured in the app, run this from the repository root:
+
+```bash
+node start-local.mjs
+```
+
+Open **http://127.0.0.1:5174**, click **Open localhost demo**, then **WhatsApp inbox**. This uses a temporary PostgreSQL database and the private AI configuration in `backend/.env.local`. The existing Gemini key was verified; the invalid Groq fallback is disabled. No Meta account or hosting is required. See [localhost setup](LOCALHOST_SETUP.md) for credentials, photo testing, and restarting.
+
+### Persistent business database
 
 Requires Node.js 22+ and PostgreSQL. Commands below use PowerShell from the repository root.
 
@@ -59,6 +71,8 @@ npm run dev
 ```
 
 Open `http://localhost:5173`. Vite proxies `/api` and `/health` to the default backend. To use a different backend, set `VITE_API_URL` before starting/building, or open **Settings → Server & API settings** in the interface. The connection test checks database readiness and API compatibility.
+
+If you previously ran the local demo, `frontend/.env.local` points to port 5100. For the persistent backend on port 5000, set `$env:VITE_API_URL = 'http://localhost:5000'` before `npm run dev`, or select that server in the interface.
 
 ### Disposable demo and browser testing
 
@@ -92,7 +106,8 @@ Before updating an existing database, take a backup. Migrations `004_business_se
 From `backend/`:
 
 ```powershell
-npm test
+npm run test:compiled
+npm run test:whatsapp
 npm run typecheck:tests
 npm run build
 ```
@@ -127,6 +142,8 @@ See the [interface and performance verification](VERIFICATION_2026-10-18.md), [l
 
 This is a configurable manual ledger foundation. It is not a complete solution for every industry. Tax is one order-wide percentage, not a complete GST filing/compliance system. Money and quantities support up to two decimal places; reporting calendar boundaries currently use UTC.
 
-Inventory procurement/stock tracking, returns, credit notes, order cancellation, refunds, scheduled subscriptions, staff invitation, and password-reset flows are not implemented. WhatsApp signature verification, durable message processing, unit conversion for AI orders, and provider delivery must be completed and tested before enabling ingestion. Existing integration code is retained but unreachable through the active application routes.
+Inventory procurement/stock tracking, returns, credit notes, order cancellation, refunds, scheduled subscriptions, staff invitation, and password-reset flows are not implemented. WhatsApp supports customer-initiated text and JPEG/PNG orders; voice notes, documents and proactive template notifications are not implemented. Free-form replies require an open 24-hour customer service window. Quantities must convert exactly to two decimal places; unclear units, packaging and varieties require clarification.
+
+See [WhatsApp verification](WHATSAPP_VERIFICATION.md) for the completed database, build, and live Gemini localhost checks, and the actual Meta delivery checks still required.
 
 Local acceptance does not verify a production deployment, external provider delivery, or migration of a particular customer's live database.

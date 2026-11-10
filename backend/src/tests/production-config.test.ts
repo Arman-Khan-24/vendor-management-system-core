@@ -2,14 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { closeSync,openSync,readFileSync,mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 
 const developmentSecret = 'super_secret_jwt_key_orderledger_dev_mode';
 const exampleSecret = 'super_secret_jwt_key_orderledger_production_change_me';
-const configUrl = new URL('../config/env.ts', import.meta.url).href;
-const loaderUrl = import.meta.resolve('tsx');
+const compiled = import.meta.url.endsWith('.js');
+const configUrl = new URL(compiled ? '../config/env.js' : '../config/env.ts', import.meta.url).href;
 
 function loadConfig(input: { environment?: string; secret?: string; dotenvSecret?: string }) {
   const tempRoot = realpathSync(tmpdir());
@@ -34,11 +34,14 @@ function loadConfig(input: { environment?: string; secret?: string; dotenvSecret
       process.stderr.write(error instanceof Error ? error.message : 'Configuration rejected');
       process.exitCode = 1;
     }`;
-    const result = spawnSync(process.execPath, ['--import', loaderUrl, '--input-type=module', '--eval', script], {
-      cwd: directory, env: environment, encoding: 'utf8', timeout: 20000, windowsHide: true
-    });
+    const stdoutPath=join(directory,'stdout'),stderrPath=join(directory,'stderr');
+    const stdoutFd=openSync(stdoutPath,'w'),stderrFd=openSync(stderrPath,'w');
+    let result;
+    try {result = spawnSync(process.execPath, [...(compiled ? [] : ['--import', import.meta.resolve('tsx')]), '--input-type=module', '--eval', script], {
+      cwd: directory, env: environment, stdio: ['ignore',stdoutFd,stderrFd], timeout: 20000, windowsHide: true
+    });} finally {closeSync(stdoutFd);closeSync(stderrFd);}
     assert.equal(result.error, undefined, 'The isolated configuration subprocess must finish');
-    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    return { status: result.status, stdout: readFileSync(stdoutPath,'utf8'), stderr: readFileSync(stderrPath,'utf8') };
   } finally {
     // Only this newly created, validated temporary directory is removed.
     rmSync(directory, { recursive: true, force: true });

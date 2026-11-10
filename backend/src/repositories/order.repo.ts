@@ -74,9 +74,9 @@ export class OrderRepository {
     };
   }
 
-  static async createOrderWithItems({ businessId, customerId, source = 'manual', notes, createdBy, items, idempotencyKey }: {
+  static async createOrderWithItems({ businessId, customerId, source = 'manual', notes, createdBy, items, idempotencyKey, client: existingClient }: {
     businessId: string; customerId: string; source?: 'manual' | 'whatsapp_text' | 'whatsapp_image';
-    notes?: string; createdBy?: string; items: { productId: string; quantity: number }[]; idempotencyKey?: string;
+    notes?: string; createdBy?: string; items: { productId: string; quantity: number }[]; idempotencyKey?: string; client?: PoolClient;
   }): Promise<OrderWithDetails> {
     return withTransaction(async client => {
       // The tenant lock serializes number allocation and billing-setting changes.
@@ -118,7 +118,7 @@ export class OrderRepository {
       if (details.total_amount > 9999999999.99) throw new AppError('Order total exceeds the supported amount.', 400);
       await saveReceipt(client, receipt, details);
       return details;
-    });
+    }, existingClient);
   }
 
   static async updateStatus({ orderId, businessId, newStatus, changedBy, client }: {

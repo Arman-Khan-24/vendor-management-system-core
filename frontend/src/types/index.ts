@@ -31,6 +31,23 @@ export interface ProviderConnection {
   hasApiKey: boolean;
 }
 export interface Connections { primary: ProviderConnection; fallback: ProviderConnection }
+export interface WhatsAppConnection {
+  businessId: string; enabled: boolean; phoneNumberId: string; wabaId: string; graphVersion: string;
+  defaultCountryCode: string; hasAccessToken: boolean; hasAppSecret: boolean; hasVerifyToken: boolean;
+}
+export type WhatsAppConnectionPatch = Partial<Pick<WhatsAppConnection,'enabled'|'phoneNumberId'|'wabaId'|'graphVersion'|'defaultCountryCode'>> & {
+  accessToken?: string; appSecret?: string; verifyToken?: string;
+};
+export interface WhatsAppMessage {
+  id: string; sender_phone: string; customer_id: string | null; customer_name: string | null;
+  direction: 'inbound'|'outbound'; message_type: string; message_text: string; status: string;
+  delivery_status: string | null; error_code: string | null; created_at: string;
+  needs_review: boolean;
+  job_id: string | null; job_status: string | null; job_error: string | null;
+  structured_output: { items: { product: string; quantity: number; unit: string }[]; warnings: string[] } | null;
+  confirmation_id: string | null; confirmation_status: string | null; expires_at: string | null;
+  extracted_items: { productId: string; quantity: number; unit: string }[] | null;
+}
 export interface BusinessUpdate {
   name: string; phone: string; currency: string; logoUrl: string;
   invoiceTrigger: 'Packed' | 'Delivered'; categoryTemplate: string;

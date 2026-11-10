@@ -42,6 +42,7 @@ export function ProviderConnections({ onDirtyChange }: { onDirtyChange: (dirty: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [testResult,setTestResult] = useState<string | null>(null);
   const dirty = !!draft && !!stored && JSON.stringify(draft) !== JSON.stringify(toDraft(stored));
   useEffect(() => { onDirtyChange(dirty); return () => onDirtyChange(false); }, [dirty, onDirtyChange]);
   const load = async () => {
@@ -49,7 +50,7 @@ export function ProviderConnections({ onDirtyChange }: { onDirtyChange: (dirty: 
     try { const connections = await ApiClient.getConnections(); setStored(connections); setDraft(toDraft(connections)); } catch (e) { setError(errorMessage(e)); }
   };
   useEffect(() => { void load(); }, []);
-  const change = (key: 'primary' | 'fallback', fields: Partial<ProviderDraft>) => { setDraft(d => d ? { ...d, [key]: { ...d[key], ...fields } } : d); setSaved(false); };
+  const change = (key: 'primary' | 'fallback', fields: Partial<ProviderDraft>) => { setDraft(d => d ? { ...d, [key]: { ...d[key], ...fields } } : d); setSaved(false); setTestResult(null); };
   const save = async (event: React.FormEvent) => {
     event.preventDefault(); if (!draft || !stored) return;
     setBusy(true); setError(null); setSaved(false);
@@ -62,7 +63,7 @@ export function ProviderConnections({ onDirtyChange }: { onDirtyChange: (dirty: 
     catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
   return <div className="stack">
-    <SectionHeading title="AI provider connections" description="Prepare your provider settings for future automated ordering." action={<Badge>Not active yet</Badge>} />
+    <SectionHeading title="AI provider connections" description="Gemini and Groq can read incoming text and photo orders once WhatsApp is enabled." />
     <ErrorNotice message={error} retry={!draft ? load : undefined} />
     {!draft ? !error && <LoadingState label="Loading connections…" /> : <form className="stack" onSubmit={save}>
       {(['primary', 'fallback'] as const).map(key => <div className="stack" key={key}>
@@ -73,7 +74,9 @@ export function ProviderConnections({ onDirtyChange }: { onDirtyChange: (dirty: 
         {draft[key].hasApiKey && <div className="check-options"><label><input type="checkbox" checked={draft[key].clearKey} onChange={e => change(key, { clearKey: e.target.checked, apiKey: '' })} />Remove saved {key} key</label></div>}
         {key === 'primary' && <div className="section-divider" />}
       </div>)}
-      <p className="form-note">WhatsApp ordering is not connected. Saving these settings does not activate AI processing or send messages.</p>
+      <p className="form-note">Choose Gemini or Groq for ordering. For photo orders, select an image-capable model. Enable WhatsApp separately after testing these settings.</p>
+      <Button variant="outline" disabled={dirty||busy} onClick={async()=>{setBusy(true);setError(null);setTestResult(null);try{const result=await ApiClient.testAiConnection();setTestResult(`Sample order extracted by ${result.provider} (${result.model})${result.wasFallback?' using fallback':''}.`);}catch(e){setError(errorMessage(e));}finally{setBusy(false);}}}>Test saved AI connection</Button>
+      {testResult&&<p className="success-note" role="status">{testResult}</p>}
       {saved && <p className="success-note" role="status"><CheckCircle2 size={16} className="inline" aria-hidden="true" /> Connections saved.</p>}
       {dirty && <p className="form-note">You have unsaved provider changes.</p>}
       <div className="form-actions"><Button variant="ghost" disabled={!dirty || busy} onClick={() => { if (stored) setDraft(toDraft(stored)); setError(null); setSaved(false); }}>Discard provider changes</Button><Button type="submit" disabled={!dirty} busy={busy}><Save size={17} aria-hidden="true" />Save provider connections</Button></div>

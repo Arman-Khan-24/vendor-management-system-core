@@ -672,3 +672,6 @@ td .text-link { text-align: left; color: var(--text); }
   .invoice-totals { width: 280px; break-after: avoid; }
   .invoice-notes { margin-top: 24px; break-inside: avoid; }
 }
+
+.whatsapp-message-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.whatsapp-webhook-url { overflow-wrap: anywhere; margin: 8px 0; }

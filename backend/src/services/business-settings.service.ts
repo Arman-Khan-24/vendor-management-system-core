@@ -1,4 +1,4 @@
-import { createCipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { config } from '../config/env.js';
 import { AppError } from '../middleware/errorHandler.js';
 import {
@@ -80,11 +80,30 @@ export function normalizeBusinessConnections(rows: readonly ConnectionSummaryRow
 
 /** Ciphertext is tenant/slot-bound. Keep JWT_SECRET stable or re-enter saved provider keys after rotation. */
 export function encryptConnectionKey(apiKey: string, businessId: string, slot: ConnectionSlot): string | null {
+  return encryptSecret(apiKey, businessId, slot);
+}
+
+export function encryptSecret(apiKey: string, businessId: string, purpose: string): string | null {
   if (!apiKey) return null;
   const key = createHash('sha256').update('orderledger:provider-connections:v1\0').update(config.jwtSecret).digest();
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
-  cipher.setAAD(Buffer.from(`${businessId}:${slot}`));
+  cipher.setAAD(Buffer.from(`${businessId}:${purpose}`));
   const ciphertext = Buffer.concat([cipher.update(apiKey, 'utf8'), cipher.final()]);
   return ['v1', iv.toString('base64url'), cipher.getAuthTag().toString('base64url'), ciphertext.toString('base64url')].join('.');
+}
+
+export function decryptSecret(value: string | null, businessId: string, purpose: string): string {
+  if (!value) return '';
+  try {
+    const [version, iv, tag, ciphertext, extra] = value.split('.');
+    if (version !== 'v1' || extra !== undefined || !iv || !tag || !ciphertext) throw new Error();
+    const key = createHash('sha256').update('orderledger:provider-connections:v1\0').update(config.jwtSecret).digest();
+    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'));
+    decipher.setAAD(Buffer.from(`${businessId}:${purpose}`));
+    decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+    return Buffer.concat([decipher.update(Buffer.from(ciphertext, 'base64url')), decipher.final()]).toString('utf8');
+  } catch {
+    throw new AppError('A saved provider key cannot be read. Re-enter it in Connections.', 503);
+  }
 }

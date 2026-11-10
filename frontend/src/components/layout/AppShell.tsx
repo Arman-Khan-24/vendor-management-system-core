@@ -27,6 +27,7 @@ export function AppShell({ currentTab, onSelectTab, onOpenNewOrder, userName = '
     { id: 'invoices', label: 'Invoices', icon: ReceiptText },
     ...(settings.modules.payments ? [{ id: 'payments', label: 'Payments', icon: CreditCard }] : []),
     ...(settings.modules.reports ? [{ id: 'reports', label: 'Reports', icon: BarChart3 }] : []),
+    ...(userRole !== 'DELIVERY' ? [{ id: 'whatsapp', label: 'WhatsApp inbox', icon: BookOpen }] : []),
     { id: 'settings', label: 'Settings', icon: Settings2 },
   ];
   const select = (id: string) => { setMoreOpen(false); onSelectTab(id); };
@@ -76,7 +77,7 @@ export function AppShell({ currentTab, onSelectTab, onOpenNewOrder, userName = '
     </Modal>
     <Modal isOpen={helpOpen} title="A simple daily routine" onClose={() => setHelpOpen(false)}>
       <ol className="help-steps"><li>Add your products and prices in Catalog.</li><li>Add customers and their payment terms.</li><li>Create an order, then mark it packed and delivered.</li><li>An invoice is created at your chosen billing stage.</li><li>Record money received. Open a customer statement to see the balance.</li></ol>
-      <p className="muted">Business owners can change branding, catalog defaults and billing in Settings. WhatsApp ordering will be available after its integration.</p>
+      <p className="muted">Business owners can change branding, catalog defaults and billing in Settings. Configure WhatsApp ordering in Connections and review incoming orders in the WhatsApp inbox.</p>
       <div className="form-actions"><Button onClick={() => setHelpOpen(false)}>Got it</Button></div>
     </Modal>
   </div>;

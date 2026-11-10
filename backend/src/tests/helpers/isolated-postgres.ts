@@ -13,10 +13,10 @@ export async function startIsolatedPostgres() {
     throw new Error('Refusing to initialize PostgreSQL outside its disposable test directory');
   }
   const listener = createServer();
-  await new Promise<void>((done, reject) => {
+  try {await new Promise<void>((done, reject) => {
     listener.once('error', reject);
     listener.listen(0, '127.0.0.1', done);
-  });
+  });}catch(error){await rm(resolvedDirectory,{recursive:true,force:true});throw error;}
   const port = (listener.address() as { port: number }).port;
   await new Promise<void>((done, reject) => listener.close(error => error ? reject(error) : done()));
   const Postgres = (EmbeddedPostgres as any).default ?? EmbeddedPostgres;

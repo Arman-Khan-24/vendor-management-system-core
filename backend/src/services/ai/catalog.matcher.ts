@@ -1,4 +1,6 @@
-import { CatalogItemContext, ExtractedOrderItem } from './ai.service.js';
+import type { CatalogItemContext, ExtractedOrderItem } from './ai.service.js';
+
+import { convertQuantity, normalizeUnit } from './units.js';
 
 export interface MatchedOrderItem {
   productId: string;
@@ -29,11 +31,29 @@ export class CatalogMatcher {
     const unresolvedItems: string[] = [];
     const ambiguousItems: Array<{ input: string; candidates: string[] }> = [];
 
+    const add = (item: ExtractedOrderItem, product: CatalogItemContext) => {
+      if (!item.unit.trim()) { unresolvedItems.push(`${item.product}: please specify a unit`); return; }
+      const quantity = convertQuantity(item.quantity, item.unit, product.unit);
+      if (quantity === null) {
+        unresolvedItems.push(`${item.product}: cannot convert ${item.quantity} ${item.unit} to ${product.unit} exactly; please clarify`);
+        return;
+      }
+      const previous = matchedItems.find(value => value.productId === product.id);
+      if (previous) {
+        const combined = Math.round((previous.quantity + quantity) * 100) / 100;
+        if (combined > 99999999.99) { unresolvedItems.push(`${item.product}: quantity is too large`); return; }
+        previous.quantity = combined;
+        previous.totalPrice = Math.round(Math.round(combined * 100) * Math.round(previous.unitPrice * 100) / 100) / 100;
+      } else {
+        matchedItems.push({ productId: product.id, productName: product.name, quantity,
+          unit: product.unit, unitPrice: Number(product.current_price), totalPrice: Math.round(Math.round(quantity * 100) * Math.round(Number(product.current_price) * 100) / 100) / 100 });
+      }
+    };
     for (const item of extractedItems) {
       const query = item.product.trim().toLowerCase();
       const qty = Number(item.quantity);
 
-      if (isNaN(qty) || qty <= 0) {
+      if (!Number.isFinite(qty) || qty <= 0) {
         unresolvedItems.push(`${item.product} (invalid quantity ${item.quantity})`);
         continue;
       }
@@ -53,28 +73,14 @@ export class CatalogMatcher {
       if (exactCandidates.length === 1) {
         const found = exactCandidates[0];
         // If customer provided a unit, ensure it matches or inherit catalog unit
-        matchedItems.push({
-          productId: found.id,
-          productName: found.name,
-          quantity: qty,
-          unit: item.unit || found.unit, // Inherits catalog base unit
-          unitPrice: found.current_price,
-          totalPrice: qty * found.current_price
-        });
+        add(item, found);
         continue;
       } else if (exactCandidates.length > 1) {
         // Multiple exact matches (e.g., "Watermelon" in kg vs "Watermelon" in piece)
         if (item.unit) {
-          const unitMatch = exactCandidates.find(c => c.unit.toLowerCase() === item.unit.toLowerCase());
+          const unitMatch = exactCandidates.find(c => normalizeUnit(c.unit) === normalizeUnit(item.unit));
           if (unitMatch) {
-            matchedItems.push({
-              productId: unitMatch.id,
-              productName: unitMatch.name,
-              quantity: qty,
-              unit: unitMatch.unit,
-              unitPrice: unitMatch.current_price,
-              totalPrice: qty * unitMatch.current_price
-            });
+            add(item, unitMatch);
             continue;
           }
         }
@@ -109,32 +115,8 @@ export class CatalogMatcher {
 
       if (candidates.length === 1) {
         const found = candidates[0];
-        matchedItems.push({
-          productId: found.id,
-          productName: found.name,
-          quantity: qty,
-          unit: item.unit || found.unit, // Inherits catalog base unit
-          unitPrice: found.current_price,
-          totalPrice: qty * found.current_price
-        });
+        add(item, found);
       } else if (candidates.length > 1) {
-        // If customer specified a unit, check if that resolves the ambiguity
-        if (item.unit) {
-          const unitMatches = candidates.filter(c => c.unit.toLowerCase() === item.unit.toLowerCase());
-          if (unitMatches.length === 1) {
-            const found = unitMatches[0];
-            matchedItems.push({
-              productId: found.id,
-              productName: found.name,
-              quantity: qty,
-              unit: found.unit,
-              unitPrice: found.current_price,
-              totalPrice: qty * found.current_price
-            });
-            continue;
-          }
-        }
-
         // Multiple products/units plausible - do NOT silently guess
         ambiguousItems.push({
           input: item.product,

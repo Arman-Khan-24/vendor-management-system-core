@@ -1,6 +1,7 @@
 import type { Business, BusinessPatch, Connections, Customer, CustomerInput, DashboardSummary, Invoice, Order, OrderInput, Payment, PaymentInput, Product, ProductInput, ProviderConnection, User } from '../types';
 import { downloadFile } from '../utils/formatters';
 import { pendingWrite } from './pendingWrite';
+import type { WhatsAppConnection,WhatsAppConnectionPatch,WhatsAppMessage } from '../types';
 
 const TOKEN_KEY = 'orderledger_token';
 const CONNECTION_KEY = 'orderledger_api_url';
@@ -154,6 +155,17 @@ export class ApiClient {
   }
   static updateConnections(body: Partial<Record<'primary' | 'fallback', Partial<Omit<ProviderConnection, 'hasApiKey'>> & { apiKey?: string }>>) { return this.write<Connections>('/business/connections', body, 'PATCH'); }
   static getDashboard() { return this.request<DashboardSummary>('/dashboard/summary'); }
+  static getWhatsAppConnection() { return this.request<WhatsAppConnection>('/whatsapp/connection'); }
+  static updateWhatsAppConnection(body: WhatsAppConnectionPatch) { return this.write<WhatsAppConnection>('/whatsapp/connection',body,'PATCH'); }
+  static testWhatsAppConnection() { return this.write<{ displayPhoneNumber: string }>('/whatsapp/connection/test',{}); }
+  static testAiConnection() { return this.write<{ provider: string; model: string; wasFallback: boolean; warnings: string[] }>('/whatsapp/ai/test',{}); }
+  static getWhatsAppMessages() { return this.request<WhatsAppMessage[]>('/whatsapp/messages'); }
+  static getWhatsAppRevision() { return this.request<{ revision: string }>('/whatsapp/revision'); }
+  static getLocalDemoStatus() { return this.request<{available:boolean;businessId:string;businessName:string;replies:'local'}>('/local-demo/status'); }
+  static openLocalDemo() { return this.request<{token:string;user:User;business:Business}>('/local-demo/session',{method:'POST',headers:{'X-OrderLedger-Local-Demo':'1'},body:'{}'}); }
+  static sendLocalDemoMessage(body:{customerId:string;text:string;image?:{data:string;mimeType:string}}) { return this.write('/local-demo/messages',body); }
+  static reviewWhatsAppMessage(id: string, items: { productId: string; quantity: number }[]) { return this.write('/whatsapp/messages/'+id+'/review',{ items }); }
+  static retryWhatsAppJob(id: string) { return this.write('/whatsapp/jobs/'+id+'/retry',{ acknowledgeDuplicateRisk: true }); }
   static getOrders(params?: { status?: string; customerId?: string }) { return this.listAll<Order>('/orders', params); }
   static getOrder(id: string) { return this.request<Order>('/orders/' + id); }
   static createOrder(body: OrderInput) { return this.writeOnce<Order>('/orders', body); }

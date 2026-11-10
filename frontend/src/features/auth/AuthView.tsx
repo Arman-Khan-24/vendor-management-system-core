@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect,useState } from 'react';
 import { ArrowUpRight, BookOpen, Check, Link2, LogIn, Package, ReceiptText, Users } from 'lucide-react';
 import { Button, ErrorNotice, Input, Modal, Select } from '../../components/ui';
 import { ApiClient } from '../../api/client';
@@ -18,6 +18,18 @@ export function AuthView({ onSuccess }: { onSuccess: (user: User, business: Busi
   const [ownerName, setOwnerName] = useState('');
   const [phone, setPhone] = useState('');
   const [template, setTemplate] = useState('custom');
+  const [localDemo,setLocalDemo]=useState(false);
+  useEffect(()=>{
+    if(!['localhost','127.0.0.1'].includes(window.location.hostname))return;
+    let active=true;
+    void ApiClient.getLocalDemoStatus().then(value=>{if(active)setLocalDemo(value.available && value.replies==='local');}).catch(()=>{});
+    return()=>{active=false;};
+  },[]);
+  const openDemo=async()=>{
+    setBusy(true);setError(null);
+    try{const result=await ApiClient.openLocalDemo();ApiClient.setToken(result.token);onSuccess(result.user,result.business);}
+    catch(e){setError(errorMessage(e));}finally{setBusy(false);}
+  };
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); if (busy) return; setBusy(true); setError(null);
     try {
@@ -44,6 +56,7 @@ export function AuthView({ onSuccess }: { onSuccess: (user: User, business: Busi
     </aside>
     <main className="auth-content"><div className="auth-form"><p className="eyebrow">{register ? 'MAKE ROOM FOR YOUR BUSINESS' : 'YOUR WORKSPACE IS WAITING'}</p><h2>{register ? 'A fresh start.' : 'Welcome back.'}</h2><p>{register ? 'Create your business. Make it yours in Settings.' : 'Sign in to pick up where you left off.'}</p>
       {error && <div style={{ marginBottom: 20 }}><ErrorNotice message={error} focus /></div>}
+      {localDemo&&<div className="form-note stack"><p>Local test mode is ready. Use the temporary business and test text or photo orders in the WhatsApp inbox. Replies stay inside this app.</p><Button variant="outline" busy={busy} onClick={()=>void openDemo()}>Open localhost demo</Button></div>}
       <form onSubmit={submit}>
         {register && <><Input label="Business name" value={businessName} required minLength={2} maxLength={100} autoComplete="organization" onChange={e => { setBusinessName(e.target.value); setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50)); }} /><Input label="Workspace ID" value={slug} required minLength={2} maxLength={50} pattern="[a-z0-9-]+" onChange={e => setSlug(e.target.value)} hint="A unique name with lowercase letters, numbers, and hyphens." /><Select label="Business preset" value={template} onChange={e => setTemplate(e.target.value)}><option value="custom">Custom — start with an empty catalog</option><option value="fruits_veg">Fresh produce — starter products included</option><option value="grocery">Grocery & staples — starter products included</option><option value="dairy">Dairy & eggs — starter products included</option></Select><Input label="Your name" value={ownerName} required minLength={2} autoComplete="name" onChange={e => setOwnerName(e.target.value)} /><Input label="Business phone" type="tel" value={phone} maxLength={20} minLength={5} autoComplete="tel" onChange={e => setPhone(e.target.value)} /></>}
         <Input label="Email address" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} value={email} required autoComplete="username" onChange={e => setEmail(e.target.value)} placeholder="you@yourbusiness.com" />
