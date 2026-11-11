@@ -1,3 +1,7 @@
 {
-  "rewrites": [{ "source": "/((?!assets/).*)", "destination": "/index.html" }]
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://orderledger-api.onrender.com/api/$1" },
+    { "source": "/health", "destination": "https://orderledger-api.onrender.com/health" },
+    { "source": "/((?!assets/).*)", "destination": "/index.html" }
+  ]
 }
