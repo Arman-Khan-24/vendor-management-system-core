@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import type { ReactNode } from 'react';
-import { ArrowUpRight, BarChart3, BookOpen, ChevronDown, CircleHelp, CreditCard, LayoutDashboard, LogOut, MoreHorizontal, Package, Plus, ReceiptText, Search, Settings2, ShoppingBag, Users } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
+import { ArrowUpRight, BarChart3, BookOpen, ChevronDown, CircleHelp, CreditCard, LayoutDashboard, LogOut, Maximize2, MoreHorizontal, Package, PanelLeftClose, PanelLeftOpen, Plus, ReceiptText, Search, Settings2, ShoppingBag, Users } from 'lucide-react';
 import { Button, Modal } from '../ui';
 import { useBusiness } from '../../features/settings/businessSettings';
 
@@ -19,6 +19,31 @@ export function AppShell({ currentTab, onSelectTab, onOpenNewOrder, userName = '
   const [helpOpen, setHelpOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
+  const [sidebar, setSidebar] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('orderledger_sidebar') || 'null');
+      return { width: Number.isFinite(saved?.width) ? Math.max(160, saved.width) : 218, collapsed: saved?.collapsed === true };
+    } catch { return { width: 218, collapsed: false }; }
+  });
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  const [resizing, setResizing] = useState(false);
+  const drag = useRef<{ pointerId: number; x: number; width: number } | null>(null);
+  const main = useRef<HTMLElement>(null);
+  const maxWidth = Math.floor(viewportWidth * .25);
+  const minWidth = Math.min(160, maxWidth);
+  const sidebarWidth = sidebar.collapsed ? 72 : Math.min(sidebar.width, maxWidth);
+  const resize = (width: number) => setSidebar({ width: Math.max(minWidth, Math.min(width, maxWidth)), collapsed: false });
+  useEffect(() => {
+    const update = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+  useEffect(() => {
+    if (!resizing) {
+      try { localStorage.setItem('orderledger_sidebar', JSON.stringify(sidebar)); } catch { /* Resizing still works when storage is unavailable. */ }
+    }
+  }, [sidebar, resizing]);
+  useEffect(() => { main.current?.scrollTo(0, 0); }, [currentTab]);
   const nav = [
     { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
     { id: 'orders', label: 'Orders', icon: ShoppingBag },
@@ -35,22 +60,42 @@ export function AppShell({ currentTab, onSelectTab, onOpenNewOrder, userName = '
   const searchOpen = searchFocused && search.trim().length > 0;
   const logo = <div className="brand-symbol">{business?.logo_url ? <img src={business.logo_url} alt="" referrerPolicy="no-referrer" onError={e => { e.currentTarget.style.display = 'none'; }} /> : <BookOpen size={24} strokeWidth={1.8} aria-hidden="true" />}</div>;
   const navButtons = (mobile = false) => nav.map(({ id, label, icon: Icon }) =>
-    <button key={id} type="button" className={'nav-item ' + (currentTab === id ? 'selected' : '')} aria-current={currentTab === id ? 'page' : undefined} onClick={() => select(id)}>
+    <button key={id} type="button" className={'nav-item ' + (currentTab === id ? 'selected' : '')} aria-label={label} title={!mobile && sidebar.collapsed ? label : undefined} aria-current={currentTab === id ? 'page' : undefined} onClick={() => select(id)}>
       <Icon size={20} aria-hidden="true" /><span>{label}</span>{mobile && <ArrowUpRight size={16} className="nav-arrow" aria-hidden="true" />}
     </button>
   );
-  return <div className="app-shell">
+  return <div className={'app-shell' + (sidebar.collapsed ? ' sidebar-collapsed' : '') + (resizing ? ' sidebar-resizing' : '')} style={{ '--sidebar-width': sidebarWidth + 'px' } as CSSProperties}>
     <a href="#main-content" className="skip-link">Skip to content</a>
-    <aside className="sidebar">
-      <button className="brand" type="button" onClick={() => select('dashboard')}>{logo}<span>{settings.branding.appName}<small>YOUR BUSINESS, TOGETHER</small></span></button>
+    <aside className="sidebar" id="workspace-sidebar" aria-label="Workspace sidebar">
+      <div className="sidebar-controls">
+        <button type="button" aria-label={sidebar.collapsed ? 'Expand sidebar' : 'Minimize sidebar'} aria-expanded={!sidebar.collapsed} aria-controls="sidebar-pages" title={sidebar.collapsed ? 'Expand sidebar' : 'Minimize sidebar'} onClick={() => setSidebar(value => ({ ...value, collapsed: !value.collapsed }))}>{sidebar.collapsed ? <PanelLeftOpen size={20} aria-hidden="true" /> : <PanelLeftClose size={20} aria-hidden="true" />}</button>
+        {!sidebar.collapsed && <button type="button" aria-label="Maximize sidebar" title="Maximize sidebar (25% of screen)" onClick={() => resize(maxWidth)}><Maximize2 size={18} aria-hidden="true" /></button>}
+      </div>
+      <button className="brand" type="button" aria-label={settings.branding.appName} title={sidebar.collapsed ? settings.branding.appName : undefined} onClick={() => select('dashboard')}>{logo}<span>{settings.branding.appName}<small>YOUR BUSINESS, TOGETHER</small></span></button>
       <div className="workspace-label"><span className="status-dot" /><span>{business?.name}</span></div>
       <p className="nav-caption">WORKSPACE</p>
-      <nav aria-label="Main navigation">{navButtons()}</nav>
+      <nav id="sidebar-pages" aria-label="Main navigation">{navButtons()}</nav>
       <div className="sidebar-bottom">
         {userRole === 'OWNER' && <button className="customize-card" onClick={() => select('settings')}><Settings2 size={21} aria-hidden="true" /><strong>Make it yours</strong><p>A setup that fits your business.</p><span>Customize workspace <ArrowUpRight size={15} aria-hidden="true" /></span></button>}
         <div className="profile-row"><div className="avatar">{userName.slice(0, 1).toUpperCase()}</div><div className="profile-name"><strong>{userName}</strong><small>{userRole === 'OWNER' ? 'Business owner' : userRole === 'DELIVERY' ? 'Delivery team' : 'Team member'}</small></div><Button variant="ghost" className="icon-button" aria-label="Sign out" onClick={onLogout}><LogOut size={18} /></Button></div>
       </div>
     </aside>
+    <div className="sidebar-resize" role="separator" tabIndex={0} aria-label="Resize sidebar" aria-orientation="vertical" aria-controls="workspace-sidebar" aria-valuemin={sidebar.collapsed ? 72 : minWidth} aria-valuemax={maxWidth} aria-valuenow={sidebarWidth} aria-valuetext={sidebar.collapsed ? 'Minimized' : Math.round(sidebarWidth / viewportWidth * 100) + '% of screen'} title="Drag to resize; arrow keys adjust width"
+      onPointerDown={event => {
+        if (event.button !== 0 || !event.isPrimary) return;
+        event.preventDefault();
+        drag.current = { pointerId: event.pointerId, x: event.clientX, width: sidebarWidth };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setResizing(true);
+      }}
+      onPointerMove={event => { if (drag.current?.pointerId === event.pointerId) resize(drag.current.width + event.clientX - drag.current.x); }}
+      onPointerUp={event => { if (drag.current?.pointerId === event.pointerId) { drag.current = null; setResizing(false); event.currentTarget.releasePointerCapture(event.pointerId); } }}
+      onLostPointerCapture={() => { drag.current = null; setResizing(false); }}
+      onKeyDown={event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        resize(event.key === 'Home' ? minWidth : event.key === 'End' ? maxWidth : sidebarWidth + (event.key === 'ArrowRight' ? 16 : -16));
+      }} />
     <div className="workspace-content">
       <header className="topbar">
       <div className="workspace-search" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchFocused(false); }}>
@@ -64,7 +109,7 @@ export function AppShell({ currentTab, onSelectTab, onOpenNewOrder, userName = '
         <button className="mobile-brand" type="button" onClick={() => setMoreOpen(true)}>{logo}<span>{business?.name}</span><ChevronDown size={16} aria-hidden="true" /></button>
         <div className="topbar-actions"><Button variant="ghost" className="icon-button" aria-label="Workspace help" onClick={() => setHelpOpen(true)}><CircleHelp size={20} /></Button><Button variant="ghost" className="icon-button workspace-settings-button" aria-label="Open business settings" onClick={() => select('settings')}><Settings2 size={19} /></Button><Button size="sm" onClick={onOpenNewOrder}><Plus size={18} aria-hidden="true" />New order</Button></div>
       </header>
-      <main id="main-content" className="main-content" tabIndex={-1}>{children}</main>
+      <main ref={main} id="main-content" className="main-content" tabIndex={-1}>{children}</main>
       <footer className="workspace-footer"><span>{settings.branding.tagline}</span><span>{business?.currency || 'INR'} · {settings.branding.appName}</span></footer>
     </div>
     <nav className="bottom-nav" aria-label="Mobile navigation">

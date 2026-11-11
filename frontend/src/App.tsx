@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Link2, RefreshCw, X } from 'lucide-react';
 import { ApiClient, ApiError } from './api/client';
 import { AppShell } from './components/layout/AppShell';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Button, EmptyState, ErrorNotice, LoadingState, Modal } from './components/ui';
 import { AuthView } from './features/auth/AuthView';
 import { CustomersView } from './features/customers/CustomersView';
@@ -181,7 +182,7 @@ export function App() {
   </BusinessProvider>;
   return <BusinessProvider business={business}>
     <AppShell currentTab={tab} onSelectTab={navigate} onOpenNewOrder={() => setNewOrder(true)} userName={user.name} userRole={user.role} onLogout={requestLogout}>
-      <div className="stack">
+      <ErrorBoundary key={tab} inline><div className="stack">
         {dataError && <ErrorNotice message={dataError} retry={() => void refresh()} />}
         {loadingData && !summary && tab !== 'settings' ? <LoadingState /> : <>
           {tab === 'dashboard' && (summary ? <DashboardView summary={summary} customers={customers} products={products} orders={orders} payments={payments} invoices={invoices} userName={user.name} onNavigateTab={navigate} onOpenNewOrder={() => setNewOrder(true)} onOpenRecordPayment={openPayment} onSelectOrder={openOrder} onStatement={openStatement} onInvoice={openInvoice} /> : <EmptyState title="Your overview could not load" description="Try refreshing once the server is available." action={<Button onClick={() => void refresh()}>Refresh overview</Button>} />)}
@@ -194,7 +195,7 @@ export function App() {
           {tab === 'whatsapp' && user.role!=='DELIVERY' && <WhatsAppInbox products={products} customers={customers} user={user} onSetup={() => { setSettingsSection('connections'); navigate('settings'); }} />}
           {tab === 'settings' && <SettingsView business={business} user={user} onSave={saveSettings} onDirtyChange={setSettingsDirty} initialSection={settingsSection} />}
         </>}
-      </div>
+      </div></ErrorBoundary>
     </AppShell>
     {newOrder && <NewOrderModal isOpen onClose={() => setNewOrder(false)} customers={customers} products={products} onSubmit={(data: OrderInput) => saveMutation(() => ApiClient.createOrder(data), 'Order created.')} onSetup={navigate} />}
     {paymentFor !== null && <RecordPaymentModal customers={customers} initialCustomerId={paymentFor} onClose={() => setPaymentFor(null)} onSubmit={(data: PaymentInput) => saveMutation(() => ApiClient.recordPayment(data), 'Payment recorded.')} onSetup={() => { setPaymentFor(null); navigate('customers'); }} />}
