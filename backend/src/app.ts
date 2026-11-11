@@ -39,7 +39,7 @@ export function createApp(localDemo?: express.Router) {
   app.get('/health', async (req, res) => {
     try {
       await checkDatabaseReadiness();
-      res.json({ status: 'ok', service: 'OrderLedger Core API', apiVersion: 2, capabilities: { idempotentWrites: true }, timestamp: new Date().toISOString() });
+      res.json({ status: 'ok', service: 'OrderLedger Core API', apiVersion: 2, capabilities: { idempotentWrites: true, businessSettings: true, whatsappOrdering: true }, buildCommit: process.env.RENDER_GIT_COMMIT || null, timestamp: new Date().toISOString() });
     } catch {
       res.status(503).json({ status: 'unavailable', service: 'OrderLedger Core API', error: 'Database connection or migrations are not ready.' });
     }

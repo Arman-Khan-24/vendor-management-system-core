@@ -197,7 +197,7 @@ export function App() {
         </>}
       </div></ErrorBoundary>
     </AppShell>
-    {newOrder && <NewOrderModal isOpen onClose={() => setNewOrder(false)} customers={customers} products={products} onSubmit={(data: OrderInput) => saveMutation(() => ApiClient.createOrder(data), 'Order created.')} onSetup={navigate} />}
+    {newOrder && <NewOrderModal isOpen onClose={() => setNewOrder(false)} customers={customers} products={products} loading={loadingData} onSubmit={(data: OrderInput) => saveMutation(() => ApiClient.createOrder(data), 'Order created.')} onSetup={navigate} />}
     {paymentFor !== null && <RecordPaymentModal customers={customers} initialCustomerId={paymentFor} onClose={() => setPaymentFor(null)} onSubmit={(data: PaymentInput) => saveMutation(() => ApiClient.recordPayment(data), 'Payment recorded.')} onSetup={() => { setPaymentFor(null); navigate('customers'); }} />}
     {order && <OrderDetailModal order={order} loading={orderLoading} loadError={orderError} onClose={() => { detail.current++; setOrder(null); }} onUpdateStatus={updateOrder} onInvoice={openInvoice} />}
     {invoiceId && (invoice ? <InvoiceModal invoice={invoice} onClose={() => { detail.current++; setInvoiceId(null); }} onPayment={openPayment} onStatement={openStatement} /> : <Modal isOpen title="Invoice" onClose={() => { detail.current++; setInvoiceId(null); }}>{invoiceError ? <ErrorNotice message={invoiceError} retry={() => void openInvoice(invoiceId)} /> : <LoadingState label="Loading invoice…" />}</Modal>)}

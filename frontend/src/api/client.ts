@@ -43,12 +43,18 @@ export class ApiClient {
   }
   static async testConnection(value: string) {
     const base = normalizeApiUrl(value);
-    const health = await fetch(base + '/health', { signal: AbortSignal.timeout(10000), credentials: 'omit', redirect: 'error' });
+    const probe = async (path: string) => {
+      try { return await fetch(base + path, { signal: AbortSignal.timeout(20000), credentials: 'omit', redirect: 'error', cache: 'no-store' }); }
+      catch (error) {
+        throw new Error(error instanceof Error && error.name === 'TimeoutError' ? 'The server took too long to respond. Try again shortly.' : 'Cannot reach this server. Check the address and your internet connection, then try again.');
+      }
+    };
+    const health = await probe('/health');
     if (!health.ok) throw new Error('Server setup is not ready (' + health.status + '). Check the API deployment and database migrations.');
     const readiness = await health.json().catch(() => null);
     if (readiness?.status !== 'ok' || readiness?.service !== 'OrderLedger Core API') throw new Error('This address did not return an OrderLedger API health response.');
     if (readiness.apiVersion !== 2 || readiness.capabilities?.idempotentWrites !== true) throw new Error('This server is running an older or incompatible OrderLedger API. Deploy the current backend before using these settings.');
-    const response = await fetch(base + '/api/auth/templates', { signal: AbortSignal.timeout(10000), credentials: 'omit', redirect: 'error' });
+    const response = await probe('/api/auth/templates');
     if (!response.ok) throw new Error('Server returned ' + response.status + '. Check the address and database connection.');
     const data = await response.json();
     if (!Array.isArray(data?.templates)) throw new Error('This address did not return an OrderLedger API response.');
@@ -159,7 +165,13 @@ export class ApiClient {
   static updateWhatsAppConnection(body: WhatsAppConnectionPatch) { return this.write<WhatsAppConnection>('/whatsapp/connection',body,'PATCH'); }
   static testWhatsAppConnection() { return this.write<{ displayPhoneNumber: string }>('/whatsapp/connection/test',{}); }
   static testAiConnection() { return this.write<{ provider: string; model: string; wasFallback: boolean; warnings: string[] }>('/whatsapp/ai/test',{}); }
-  static getWhatsAppMessages() { return this.request<WhatsAppMessage[]>('/whatsapp/messages'); }
+  static async getWhatsAppMessages(): Promise<WhatsAppMessage[]> {
+    const messages = await this.request<unknown>('/whatsapp/messages');
+    if (!Array.isArray(messages)) {
+      throw new ApiError('WhatsApp inbox is unavailable because this server is running an older OrderLedger backend. Deploy the latest backend, then refresh the inbox.', 503);
+    }
+    return messages;
+  }
   static getWhatsAppRevision() { return this.request<{ revision: string }>('/whatsapp/revision'); }
   static getLocalDemoStatus() { return this.request<{available:boolean;businessId:string;businessName:string;replies:'local'}>('/local-demo/status'); }
   static openLocalDemo() { return this.request<{token:string;user:User;business:Business}>('/local-demo/session',{method:'POST',headers:{'X-OrderLedger-Local-Demo':'1'},body:'{}'}); }

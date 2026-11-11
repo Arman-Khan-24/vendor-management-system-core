@@ -319,6 +319,9 @@ test('health reports pending migrations and becomes ready only when all are reco
   const healthy = await request('/health', undefined, 'GET', '');
   assert.equal(healthy.status, 200);
   assert.equal(healthy.data.apiVersion, 2);
+  assert.equal(healthy.data.capabilities.businessSettings, true);
+  assert.equal(healthy.data.capabilities.whatsappOrdering, true);
+  assert.equal(healthy.data.buildCommit, process.env.RENDER_GIT_COMMIT || null);
   await pool.query("DELETE FROM _migrations WHERE filename = '005_ledger_snapshots.sql'");
   try {
     assert.equal((await request('/health', undefined, 'GET', '')).status, 503);
