@@ -1,6 +1,7 @@
 services:
   - type: web
     name: orderledger-api
+    branch: main
     runtime: node
     plan: free
     rootDir: backend

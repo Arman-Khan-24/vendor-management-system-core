@@ -91,6 +91,8 @@ Open `http://127.0.0.1:5174`. Register a test account. Stop the isolated server 
 
 ## Build and deploy
 
+The repository uses only `main`. Both Vercel and Render must deploy that branch. For an existing Render service, set **Settings → Build & Deploy → Branch** to `main`; the blueprint's branch setting does not change a separately configured service automatically.
+
 Backend: `npm ci`, `npm run build`, then `npm start` from `backend/`. The build copies SQL migrations and the licensed PDF font into `dist`. Generated `dist` files are ignored by Git and must be built on the host.
 
 Frontend: run `npm ci` and `npm run build` from `frontend/`, with `VITE_API_URL` set to the HTTPS API address if the API is on another origin. Deploy `frontend/dist` to a static host; alternatively, route the site's `/api` and `/health` requests to the backend.
