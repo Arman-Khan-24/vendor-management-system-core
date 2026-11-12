@@ -94,7 +94,7 @@ export class ApiClient {
     if (token) headers.set('Authorization', 'Bearer ' + token);
     let response: Response;
     try {
-      response = await fetch(base + endpoint, { ...options, headers, credentials: 'omit', redirect: 'error', signal: options.signal || AbortSignal.timeout(options.method && options.method !== 'GET' ? 20000 : CONNECTION_TIMEOUT) });
+      response = await fetch(base + endpoint, { ...options, headers, credentials: 'omit', redirect: 'error', signal: options.signal || AbortSignal.timeout(CONNECTION_TIMEOUT) });
     } catch (error) {
       const retryHint = headers.has('Idempotency-Key') ? ' Your submission is unconfirmed. Retry with the same details; it will not be recorded twice.' : '';
       if (error instanceof Error && error.name === 'TimeoutError') throw new ApiError('The server took too long to respond.' + (retryHint || ' Check your connection, then refresh before retrying a save.'), 0);
