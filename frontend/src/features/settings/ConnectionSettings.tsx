@@ -10,21 +10,25 @@ export function ServerConnection({ signedIn = false, onDirtyChange }: { signedIn
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tested, setTested] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const changesServer = signedIn && ApiClient.wouldChangeServer(endpoint);
   useEffect(() => { onDirtyChange?.(endpoint !== ApiClient.getConnection()); return () => onDirtyChange?.(false); }, [endpoint, onDirtyChange]);
   const test = async () => {
     setBusy(true); setError(null); setTested(null);
     try { await ApiClient.testConnection(endpoint); setTested(endpoint); } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
   const save = () => {
-    try { normalizeApiUrl(endpoint); ApiClient.setConnection(endpoint); setTested(null); } catch (e) { setError(errorMessage(e)); }
+    try { normalizeApiUrl(endpoint); ApiClient.setConnection(endpoint); setEndpoint(ApiClient.getConnection()); setTested(null); setError(null); setSaved(true); } catch (e) { setError(errorMessage(e)); }
   };
   return <div className="stack">
     <SectionHeading title="Your app server" description="This connection is saved on this device." />
-    <Input label="Backend API address" type="url" value={endpoint} onChange={e => { setEndpoint(e.target.value); setTested(null); }} placeholder="https://api.yourbusiness.com" hint="Leave blank to use this website’s /api address. A final /api is optional." />
+    <Input label="Backend API address" type="url" value={endpoint} disabled={busy} onChange={e => { setEndpoint(e.target.value); setTested(null); setError(null); setSaved(false); }} placeholder="Use this website’s server" hint="Leave blank to use this website’s server. Enter an address only to connect a different server." />
+    {busy && <p className="form-note" role="status">Connecting… A sleeping server can take up to a minute to start.</p>}
     <ErrorNotice message={error} />
     {tested === endpoint && <p className="success-note" role="status">Connection verified. The server and database are responding.</p>}
+    {saved && <p className="success-note" role="status">Connection saved.</p>}
     <p className="form-note">{signedIn ? 'Changing servers signs you out. Sign in with an account on the new server.' : 'Your login details will be sent to this server. Test the address before signing in.'}</p>
-    <div className="row wrap"><Button variant="outline" busy={busy} onClick={test}><Link2 size={17} aria-hidden="true" />Test connection</Button><Button onClick={save} disabled={busy || endpoint === ApiClient.getConnection()}><Server size={17} aria-hidden="true" />{signedIn ? 'Save & sign out' : 'Save connection'}</Button></div>
+    <div className="row wrap"><Button variant="outline" busy={busy} onClick={test}><Link2 size={17} aria-hidden="true" />Test connection</Button><Button onClick={save} disabled={busy || endpoint === ApiClient.getConnection()}><Server size={17} aria-hidden="true" />{changesServer ? 'Save & sign out' : 'Save connection'}</Button></div>
   </div>;
 }
 
@@ -32,8 +36,8 @@ type ProviderDraft = ProviderConnection & { apiKey: string; clearKey: boolean };
 const toDraft = (connections: Connections) => ({ primary: { ...connections.primary, apiKey: '', clearKey: false }, fallback: { ...connections.fallback, apiKey: '', clearKey: false } });
 const providerDefaults = {
   openai: { endpoint: 'https://api.openai.com/v1', model: '' },
-  gemini: { endpoint: 'https://generativelanguage.googleapis.com/v1beta', model: '' },
-  groq: { endpoint: 'https://api.groq.com/openai/v1', model: '' },
+  gemini: { endpoint: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-2.5-flash' },
+  groq: { endpoint: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile' },
   custom: { endpoint: '', model: '' },
 };
 export function ProviderConnections({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
@@ -50,7 +54,7 @@ export function ProviderConnections({ onDirtyChange }: { onDirtyChange: (dirty: 
     try { const connections = await ApiClient.getConnections(); setStored(connections); setDraft(toDraft(connections)); } catch (e) { setError(errorMessage(e)); }
   };
   useEffect(() => { void load(); }, []);
-  const change = (key: 'primary' | 'fallback', fields: Partial<ProviderDraft>) => { setDraft(d => d ? { ...d, [key]: { ...d[key], ...fields } } : d); setSaved(false); setTestResult(null); };
+  const change = (key: 'primary' | 'fallback', fields: Partial<ProviderDraft>) => { setDraft(d => d ? { ...d, [key]: { ...d[key], ...fields } } : d); setSaved(false); setTestResult(null); setError(null); };
   const save = async (event: React.FormEvent) => {
     event.preventDefault(); if (!draft || !stored) return;
     setBusy(true); setError(null); setSaved(false);
@@ -63,12 +67,12 @@ export function ProviderConnections({ onDirtyChange }: { onDirtyChange: (dirty: 
     catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
   return <div className="stack">
-    <SectionHeading title="AI provider connections" description="Gemini and Groq can read incoming text and photo orders once WhatsApp is enabled." />
+    <SectionHeading title="AI provider connections" description="Gemini and Groq read text and photos in New order. The same connection also handles incoming WhatsApp orders." />
     <ErrorNotice message={error} retry={!draft ? load : undefined} />
-    {!draft ? !error && <LoadingState label="Loading connections…" /> : <form className="stack" onSubmit={save}>
+    {!draft ? !error && <LoadingState label="Loading connections…" /> : <form onSubmit={save}><fieldset className="stack settings-fields" disabled={busy}>
       {(['primary', 'fallback'] as const).map(key => <div className="stack" key={key}>
         <div className="row between"><h3>{key === 'primary' ? 'Primary provider' : 'Fallback provider'}</h3><Badge variant={draft[key].hasApiKey ? 'success' : 'default'}>{draft[key].hasApiKey ? 'Key saved' : 'No saved key'}</Badge></div>
-        <div className="form-grid"><Select label={key === 'primary' ? 'Primary provider' : 'Fallback provider'} value={draft[key].provider} onChange={e => { const provider = e.target.value as ProviderConnection['provider']; change(key, { provider, ...providerDefaults[provider] }); }}><option value="openai">OpenAI</option><option value="gemini">Google Gemini</option><option value="groq">Groq</option><option value="custom">Custom / compatible API</option></Select><Input label={key === 'primary' ? 'Primary model' : 'Fallback model'} value={draft[key].model} maxLength={150} placeholder="Model ID from your provider" onChange={e => change(key, { model: e.target.value })} /></div>
+        <div className="form-grid"><Select label={key === 'primary' ? 'Primary provider' : 'Fallback provider'} value={draft[key].provider} onChange={e => { const provider = e.target.value as ProviderConnection['provider']; change(key, { provider, ...providerDefaults[provider] }); }}><option value="openai" disabled>OpenAI (not supported for order extraction)</option><option value="gemini">Google Gemini</option><option value="groq">Groq</option><option value="custom" disabled>Custom (not supported for order extraction)</option></Select><Input label={key === 'primary' ? 'Primary model' : 'Fallback model'} value={draft[key].model} maxLength={150} placeholder="Model ID from your provider" onChange={e => change(key, { model: e.target.value })} /></div>
         <Input label={key === 'primary' ? 'Primary endpoint' : 'Fallback endpoint'} type="url" value={draft[key].endpoint} required onChange={e => change(key, { endpoint: e.target.value })} />
         <Input label={key === 'primary' ? 'Primary API key' : 'Fallback API key'} type="password" autoComplete="new-password" value={draft[key].apiKey} disabled={draft[key].clearKey} onChange={e => change(key, { apiKey: e.target.value })} placeholder={draft[key].hasApiKey ? 'Leave blank to keep saved key' : 'Enter an API key'} hint="Stored on the server. Saved keys are never shown or exported in a blueprint." />
         {draft[key].hasApiKey && <div className="check-options"><label><input type="checkbox" checked={draft[key].clearKey} onChange={e => change(key, { clearKey: e.target.checked, apiKey: '' })} />Remove saved {key} key</label></div>}
@@ -80,6 +84,6 @@ export function ProviderConnections({ onDirtyChange }: { onDirtyChange: (dirty: 
       {saved && <p className="success-note" role="status"><CheckCircle2 size={16} className="inline" aria-hidden="true" /> Connections saved.</p>}
       {dirty && <p className="form-note">You have unsaved provider changes.</p>}
       <div className="form-actions"><Button variant="ghost" disabled={!dirty || busy} onClick={() => { if (stored) setDraft(toDraft(stored)); setError(null); setSaved(false); }}>Discard provider changes</Button><Button type="submit" disabled={!dirty} busy={busy}><Save size={17} aria-hidden="true" />Save provider connections</Button></div>
-    </form>}
+    </fieldset></form>}
   </div>;
 }

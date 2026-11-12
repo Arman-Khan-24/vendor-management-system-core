@@ -4,6 +4,8 @@ import { validateBody, validateUuidParam, getPagination } from '../middleware/va
 import { createOrderSchema, updateOrderStatusSchema } from '../validators/schemas.js';
 import { OrderRepository } from '../repositories/order.repo.js';
 import { OrderService } from '../services/order.service.js';
+import { OrderImportService } from '../services/order-import.service.js';
+import { orderImportSchema } from '../validators/order-import.schemas.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { OrderStatus } from '../models/types.js';
 
@@ -46,6 +48,11 @@ router.post('/', requireRoles('OWNER', 'STAFF'), validateBody(createOrderSchema)
   } catch (err) {
     next(err);
   }
+});
+
+router.post('/extract', requireRoles('OWNER', 'STAFF'), validateBody(orderImportSchema), async (req, res, next) => {
+  try { res.json(await OrderImportService.extract(req.businessId!, req.body)); }
+  catch (error) { next(error); }
 });
 
 router.get('/:id', async (req, res, next) => {

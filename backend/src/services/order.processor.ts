@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 import { query, withTransaction } from '../database/connection.js';
+import { ProductRepository } from '../repositories/product.repo.js';
 import { WhatsAppRepository, type WhatsAppJob } from '../repositories/whatsapp.repo.js';
 import { OrderRepository } from '../repositories/order.repo.js';
 import { CatalogMatcher, type MatchedOrderItem } from './ai/catalog.matcher.js';
@@ -94,7 +95,7 @@ export class OrderProcessingEngine {
     const pending = (await query("SELECT * FROM pending_order_confirmations WHERE business_id=$1 AND customer_id=$2 AND status='pending_confirmation'", [job.business_id,customer.id])).rows[0];
     const previous = pending && new Date(pending.expires_at).getTime()>Date.now()
       ? pending.extracted_items.map((item: MatchedOrderItem) => ({ product: item.productName, quantity: item.quantity, unit: item.unit })) : undefined;
-    const catalog = (await query('SELECT id,name,unit,current_price FROM products WHERE business_id=$1 AND active', [job.business_id])).rows.map(row => ({ ...row, current_price: Number(row.current_price) }));
+    const catalog = await ProductRepository.catalog(job.business_id);
     const ai = await getBusinessAi(job.business_id);
     const started = Date.now();
     const image = job.payload.messageType === 'image' ? await provider.downloadMedia(job.payload.mediaId) : null;

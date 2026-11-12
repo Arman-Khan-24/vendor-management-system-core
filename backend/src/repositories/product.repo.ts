@@ -3,6 +3,10 @@ import type { PoolClient } from 'pg';
 import { Product } from '../models/types.js';
 
 export class ProductRepository {
+  static async catalog(businessId: string) {
+    const result = await query<Pick<Product, 'id' | 'name' | 'unit' | 'current_price'>>('SELECT id,name,unit,current_price FROM products WHERE business_id=$1 AND active ORDER BY name,id', [businessId]);
+    return result.rows.map(row => ({ ...row, current_price: Number(row.current_price) }));
+  }
   static async list({
     businessId,
     search,

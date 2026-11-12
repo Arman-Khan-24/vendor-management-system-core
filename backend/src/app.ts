@@ -16,6 +16,7 @@ import webhookRoutes from './routes/webhook.routes.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { checkDatabaseReadiness } from './database/migrator.js';
 import { config } from './config/env.js';
+import { authenticate, requireRoles } from './middleware/auth.middleware.js';
 
 export function createApp(localDemo?: express.Router) {
   if (localDemo && config.env==='production') throw new Error('Local demo routes are unavailable in production.');
@@ -30,6 +31,7 @@ export function createApp(localDemo?: express.Router) {
   app.use(helmet());
   app.use(cors({ origin: true, credentials: true, exposedHeaders: ['X-Request-ID'] }));
   if (localDemo) app.use('/api/local-demo',express.json({limit:'8mb'}),localDemo);
+  app.use('/api/orders/extract', authenticate, requireRoles('OWNER', 'STAFF'), express.json({ limit: '4.2mb' }));
   app.use(express.json({ limit: '1mb', verify: (req,res,buffer) => {
     if (req.url?.startsWith('/webhooks/whatsapp/')) (res as any).locals.rawBody = Buffer.from(buffer);
   } }));
@@ -39,7 +41,7 @@ export function createApp(localDemo?: express.Router) {
   app.get('/health', async (req, res) => {
     try {
       await checkDatabaseReadiness();
-      res.json({ status: 'ok', service: 'OrderLedger Core API', apiVersion: 2, capabilities: { idempotentWrites: true, businessSettings: true, whatsappOrdering: true }, buildCommit: process.env.RENDER_GIT_COMMIT || null, timestamp: new Date().toISOString() });
+      res.json({ status: 'ok', service: 'OrderLedger Core API', apiVersion: 2, capabilities: { idempotentWrites: true, businessSettings: true, whatsappOrdering: true, orderImport: true }, buildCommit: process.env.RENDER_GIT_COMMIT || null, timestamp: new Date().toISOString() });
     } catch {
       res.status(503).json({ status: 'unavailable', service: 'OrderLedger Core API', error: 'Database connection or migrations are not ready.' });
     }

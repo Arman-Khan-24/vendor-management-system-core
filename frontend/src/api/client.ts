@@ -1,10 +1,11 @@
-import type { Business, BusinessPatch, Connections, Customer, CustomerInput, DashboardSummary, Invoice, Order, OrderInput, Payment, PaymentInput, Product, ProductInput, ProviderConnection, User } from '../types';
+import type { Business, BusinessPatch, Connections, Customer, CustomerInput, DashboardSummary, Invoice, Order, OrderInput, OrderImportResult, Payment, PaymentInput, Product, ProductInput, ProviderConnection, User } from '../types';
 import { downloadFile } from '../utils/formatters';
 import { pendingWrite } from './pendingWrite';
 import type { WhatsAppConnection,WhatsAppConnectionPatch,WhatsAppMessage } from '../types';
 
 const TOKEN_KEY = 'orderledger_token';
 const CONNECTION_KEY = 'orderledger_api_url';
+const CONNECTION_TIMEOUT = 65000;
 
 export class ApiError extends Error {
   constructor(message: string, public status: number, public requestId?: string) {
@@ -24,6 +25,26 @@ export function normalizeApiUrl(value: string): string {
   }
   return url.toString().replace(/\/+$/, '').replace(/\/api$/i, '');
 }
+function connectionAddress(value: string): string {
+  const address = normalizeApiUrl(value);
+  const proxyTarget = import.meta.env.VITE_PROXY_API_URL;
+  return proxyTarget && address === normalizeApiUrl(proxyTarget) ? '' : address;
+}
+function providerSettings(value: unknown): Connections {
+  const data = value as Connections | null;
+  if (!data || !['primary', 'fallback'].every(slot => {
+    const provider = data[slot as keyof Connections];
+    return provider && ['openai', 'gemini', 'groq', 'custom'].includes(provider.provider) && typeof provider.endpoint === 'string' && typeof provider.model === 'string' && typeof provider.hasApiKey === 'boolean';
+  })) throw new ApiError('The server returned incomplete AI provider settings. Reload the connection settings and try again.', 502);
+  return data;
+}
+function whatsappSettings(value: unknown): WhatsAppConnection {
+  const data = value as WhatsAppConnection | null;
+  if (!data || !['businessId', 'phoneNumberId', 'wabaId', 'graphVersion', 'defaultCountryCode'].every(key => typeof data[key as keyof WhatsAppConnection] === 'string') || !['enabled', 'hasAccessToken', 'hasAppSecret', 'hasVerifyToken'].every(key => typeof data[key as keyof WhatsAppConnection] === 'boolean')) {
+    throw new ApiError('The server returned incomplete WhatsApp settings. Reload the connection settings and try again.', 502);
+  }
+  return data;
+}
 function queryString(params: Record<string, unknown> = {}) {
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => { if (value !== undefined && value !== null && value !== '') query.set(key, String(value)); });
@@ -33,18 +54,23 @@ export class ApiClient {
   static hasToken() { return !!localStorage.getItem(TOKEN_KEY); }
   static setToken(token: string) { localStorage.setItem(TOKEN_KEY, token); }
   static clearToken() { localStorage.removeItem(TOKEN_KEY); }
-  static getConnection(): string { return localStorage.getItem(CONNECTION_KEY) ?? (import.meta.env.VITE_API_URL || ''); }
+  static getConnection(): string { return connectionAddress(localStorage.getItem(CONNECTION_KEY) ?? (import.meta.env.VITE_API_URL || '')); }
+  static getServerAddress(value = this.getConnection()): string { return connectionAddress(value) || normalizeApiUrl(import.meta.env.VITE_PROXY_API_URL || ''); }
+  static wouldChangeServer(value: string): boolean {
+    try { return this.getServerAddress(value) !== this.getServerAddress(); } catch { return true; }
+  }
   static getBase(): string { return normalizeApiUrl(this.getConnection()) + '/api'; }
   static setConnection(value: string) {
-    const normalized = normalizeApiUrl(value);
-    this.clearToken();
+    const normalized = connectionAddress(value);
+    const changedServer = this.wouldChangeServer(value);
+    if (changedServer) this.clearToken();
     localStorage.setItem(CONNECTION_KEY, normalized);
-    window.dispatchEvent(new Event('orderledger:connection'));
+    if (changedServer) window.dispatchEvent(new Event('orderledger:connection'));
   }
   static async testConnection(value: string) {
-    const base = normalizeApiUrl(value);
+    const base = connectionAddress(value);
     const probe = async (path: string) => {
-      try { return await fetch(base + path, { signal: AbortSignal.timeout(20000), credentials: 'omit', redirect: 'error', cache: 'no-store' }); }
+      try { return await fetch(base + path, { signal: AbortSignal.timeout(CONNECTION_TIMEOUT), credentials: 'omit', redirect: 'error', cache: 'no-store' }); }
       catch (error) {
         throw new Error(error instanceof Error && error.name === 'TimeoutError' ? 'The server took too long to respond. Try again shortly.' : 'Cannot reach this server. Check the address and your internet connection, then try again.');
       }
@@ -68,7 +94,7 @@ export class ApiClient {
     if (token) headers.set('Authorization', 'Bearer ' + token);
     let response: Response;
     try {
-      response = await fetch(base + endpoint, { ...options, headers, credentials: 'omit', redirect: 'error', signal: options.signal || AbortSignal.timeout(20000) });
+      response = await fetch(base + endpoint, { ...options, headers, credentials: 'omit', redirect: 'error', signal: options.signal || AbortSignal.timeout(options.method && options.method !== 'GET' ? 20000 : CONNECTION_TIMEOUT) });
     } catch (error) {
       const retryHint = headers.has('Idempotency-Key') ? ' Your submission is unconfirmed. Retry with the same details; it will not be recorded twice.' : '';
       if (error instanceof Error && error.name === 'TimeoutError') throw new ApiError('The server took too long to respond.' + (retryHint || ' Check your connection, then refresh before retrying a save.'), 0);
@@ -108,11 +134,12 @@ export class ApiClient {
       identity = JSON.parse(atob(token!.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
       if (!identity.userId || !identity.businessId) throw new Error();
     } catch { throw new ApiError('Your session has expired. Sign in again.', 401); }
-    const scope = JSON.stringify([base, identity.businessId, identity.userId, endpoint]);
+    const scope = JSON.stringify([(this.getServerAddress() || normalizeApiUrl(this.getConnection())) + '/api', identity.businessId, identity.userId, endpoint]);
+    const previousScope = JSON.stringify([base, identity.businessId, identity.userId, endpoint]);
     return pendingWrite(scope, body, async key => {
       let response: Response;
       try {
-        response = await fetch(base.replace(/\/api$/, '') + '/health', { signal: AbortSignal.timeout(10000), credentials: 'omit', redirect: 'error', cache: 'no-store' });
+        response = await fetch(base.replace(/\/api$/, '') + '/health', { signal: AbortSignal.timeout(CONNECTION_TIMEOUT), credentials: 'omit', redirect: 'error', cache: 'no-store' });
       } catch { throw new ApiError('Cannot confirm the server is ready. Your submission has not been sent. Check your connection and retry.', 0); }
       if (!response.ok) throw new ApiError('The server or database is not ready. Your submission has not been sent. Please retry shortly.', 503);
       const health = await response.json().catch(() => null);
@@ -123,7 +150,7 @@ export class ApiClient {
       const result = await this.request<T>(endpoint, { method: 'POST', body: JSON.stringify(body), headers: { 'Idempotency-Key': key } });
       if (!result || typeof (result as { id?: unknown }).id !== 'string') throw new ApiError('The server did not confirm the saved record. Retry with the same details.', 0);
       return result;
-    });
+    }, [previousScope]);
   }
   private static async listAll<T extends { id: string }>(endpoint: string, params: Record<string, unknown> = {}): Promise<T[]> {
     const records: T[] = [];
@@ -153,18 +180,18 @@ export class ApiClient {
     return updated;
   }
   static async getConnections() {
-    try { return await this.request<Connections>('/business/connections'); }
+    try { return providerSettings(await this.request<unknown>('/business/connections')); }
     catch (error) {
       if (error instanceof ApiError && error.status === 404) throw new ApiError('Provider settings are unavailable on this server. Deploy the current OrderLedger backend to enable Connections.', 503);
       throw error;
     }
   }
-  static updateConnections(body: Partial<Record<'primary' | 'fallback', Partial<Omit<ProviderConnection, 'hasApiKey'>> & { apiKey?: string }>>) { return this.write<Connections>('/business/connections', body, 'PATCH'); }
+  static async updateConnections(body: Partial<Record<'primary' | 'fallback', Partial<Omit<ProviderConnection, 'hasApiKey'>> & { apiKey?: string }>>) { return providerSettings(await this.write<unknown>('/business/connections', body, 'PATCH')); }
   static getDashboard() { return this.request<DashboardSummary>('/dashboard/summary'); }
-  static getWhatsAppConnection() { return this.request<WhatsAppConnection>('/whatsapp/connection'); }
-  static updateWhatsAppConnection(body: WhatsAppConnectionPatch) { return this.write<WhatsAppConnection>('/whatsapp/connection',body,'PATCH'); }
-  static testWhatsAppConnection() { return this.write<{ displayPhoneNumber: string }>('/whatsapp/connection/test',{}); }
-  static testAiConnection() { return this.write<{ provider: string; model: string; wasFallback: boolean; warnings: string[] }>('/whatsapp/ai/test',{}); }
+  static async getWhatsAppConnection() { return whatsappSettings(await this.request<unknown>('/whatsapp/connection')); }
+  static async updateWhatsAppConnection(body: WhatsAppConnectionPatch) { return whatsappSettings(await this.write<unknown>('/whatsapp/connection',body,'PATCH')); }
+  static testWhatsAppConnection() { return this.request<{ displayPhoneNumber: string }>('/whatsapp/connection/test', { method: 'POST', body: '{}', signal: AbortSignal.timeout(CONNECTION_TIMEOUT) }); }
+  static testAiConnection() { return this.request<{ provider: string; model: string; wasFallback: boolean; warnings: string[] }>('/whatsapp/ai/test', { method: 'POST', body: '{}', signal: AbortSignal.timeout(CONNECTION_TIMEOUT) }); }
   static async getWhatsAppMessages(): Promise<WhatsAppMessage[]> {
     const messages = await this.request<unknown>('/whatsapp/messages');
     if (!Array.isArray(messages)) {
@@ -181,6 +208,18 @@ export class ApiClient {
   static getOrders(params?: { status?: string; customerId?: string }) { return this.listAll<Order>('/orders', params); }
   static getOrder(id: string) { return this.request<Order>('/orders/' + id); }
   static createOrder(body: OrderInput) { return this.writeOnce<Order>('/orders', body); }
+  static async extractOrder(body: { text: string; image?: { data: string; mimeType: string } }): Promise<OrderImportResult> {
+    try {
+      const data = await this.request<OrderImportResult>('/orders/extract', { method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(CONNECTION_TIMEOUT) });
+      if (!data || !Array.isArray(data.items) || !data.items.length || !Array.isArray(data.warnings) || data.warnings.some(w => typeof w !== 'string') || data.items.some(item => !item || typeof item.productId !== 'string' || typeof item.inputProduct !== 'string' || typeof item.inputUnit !== 'string' || !Number.isFinite(item.inputQuantity) || (item.quantity !== null && (!Number.isFinite(item.quantity) || item.quantity <= 0)))) {
+        throw new ApiError('The server returned an unreadable order draft. Your existing items have been kept. Try extracting again.', 502);
+      }
+      return data;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) throw new ApiError('Order import is not available on this server yet. Try again after the server update completes.', 503);
+      throw error;
+    }
+  }
   static updateOrderStatus(id: string, status: string) { return this.write<Order>('/orders/' + id + '/status', { status }, 'PATCH'); }
   static getCustomers(search?: string) { return this.listAll<Customer>('/customers', { search, all: true }); }
   static getCustomer(id: string) { return this.request<Customer>('/customers/' + id); }

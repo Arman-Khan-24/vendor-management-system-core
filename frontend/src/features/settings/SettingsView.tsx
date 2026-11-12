@@ -58,6 +58,7 @@ function readBlueprint(value: unknown): Blueprint {
   if (!['sage', 'lavender', 'peach', 'sky'].includes(branding.accent) || !['light', 'dark', 'system'].includes(branding.theme)) throw new Error('Blueprint has an unsupported theme.');
   if (!['Packed', 'Delivered'].includes(b.invoiceTrigger) || !presets.some(p => p.id === b.categoryTemplate) || !/^[A-Z]{3}$/.test(str(b.currency))) throw new Error('Blueprint has invalid business defaults.');
   if (typeof modules.reports !== 'boolean' || typeof modules.payments !== 'boolean' || typeof billing.defaultCreditTermsDays !== 'number' || typeof billing.taxRate !== 'number') throw new Error('Blueprint has invalid feature or billing values.');
+  if (!Number.isInteger(billing.defaultCreditTermsDays) || billing.defaultCreditTermsDays < 0 || billing.defaultCreditTermsDays > 365 || !Number.isFinite(billing.taxRate) || billing.taxRate < 0 || billing.taxRate > 100) throw new Error('Blueprint payment terms must be 0–365 days and its tax rate must be 0–100%.');
   const methods = strings(billing.paymentMethods);
   if (!methods.length || methods.some(m => !(m in paymentLabels))) throw new Error('Blueprint has an unsupported payment method.');
   const units = strings(catalog.units);
@@ -94,8 +95,8 @@ export function SettingsView({ business, user, onSave, onDirtyChange, initialSec
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [anyDirty]);
-  const update = (patch: Partial<BusinessUpdate>) => { setDraft(d => ({ ...d, ...patch })); setSaved(false); };
-  const setting = <K extends keyof BusinessSettings>(key: K, patch: Partial<BusinessSettings[K]>) => { setDraft(d => ({ ...d, settings: { ...d.settings, [key]: { ...d.settings[key], ...patch } } })); setSaved(false); };
+  const update = (patch: Partial<BusinessUpdate>) => { setDraft(d => ({ ...d, ...patch })); setSaved(false); setError(null); };
+  const setting = <K extends keyof BusinessSettings>(key: K, patch: Partial<BusinessSettings[K]>) => { setDraft(d => ({ ...d, settings: { ...d.settings, [key]: { ...d.settings[key], ...patch } } })); setSaved(false); setError(null); };
   const save = async (event: React.FormEvent) => {
     event.preventDefault(); setError(null); setSaved(false); setBusy(true);
     try {
@@ -132,7 +133,7 @@ export function SettingsView({ business, user, onSave, onDirtyChange, initialSec
         {error && <Button variant="outline" onClick={() => setSection('connections')}><Link2 size={17} aria-hidden="true" />Check server connection</Button>}
         <div className="stack" hidden={section !== 'connections'} style={section !== 'connections' ? { display: 'none' } : undefined}><Card className="settings-section"><ServerConnection signedIn onDirtyChange={setServerDirty} /></Card><Card className="settings-section"><ProviderConnections onDirtyChange={setConnectionsDirty} /></Card><Card className="settings-section"><WhatsAppSettings onDirtyChange={setWhatsAppDirty} /></Card></div>
         {section !== 'connections' &&
-          <form onSubmit={save}>
+          <form onSubmit={save}><fieldset className="settings-fields" disabled={busy}>
             <div className="card settings-section">
               {section === 'business' && <div className="stack">
                 <SectionHeading title="The business behind the name" description="These details appear on your invoices and statements." />
@@ -185,7 +186,7 @@ export function SettingsView({ business, user, onSave, onDirtyChange, initialSec
               </div>}
             </div>
             <div className="settings-save"><p>{!business.settings ? 'Update the API to enable saving.' : saved && !dirty ? 'All changes saved.' : dirty ? 'You have unsaved changes.' : 'Your settings are up to date.'}</p><div className="row"><Button variant="ghost" disabled={!dirty || busy} onClick={() => { setDraft(businessDraft(business)); setError(null); setSaved(false); }}>Discard</Button><Button type="submit" disabled={!dirty || !business.settings} busy={busy}><Save size={17} aria-hidden="true" />Save changes</Button></div></div>
-          </form>}
+          </fieldset></form>}
         {section === 'connections' && dirty && <p className="form-note" style={{ marginTop: 16 }}>Your business settings have unsaved changes. Return to a settings section to save them.</p>}
       </div>
     </div>}

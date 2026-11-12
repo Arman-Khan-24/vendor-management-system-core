@@ -4,10 +4,10 @@ import { AppError } from '../../middleware/errorHandler.js';
 import { AiOrderExtractionService, GeminiExtractionProvider, GroqExtractionProvider, type IOrderExtractionProvider } from './ai.service.js';
 
 function provider(name: string, key: string, model: string, visionModel: string, endpoint?: string): IOrderExtractionProvider {
-  if (!key || !model) throw new AppError('Save a provider API key and model in Connections before enabling WhatsApp.', 400);
+  if (!key || !model) throw new AppError('Save a provider API key and model in Settings → Connections before extracting orders.', 400);
   if (name === 'gemini') return new GeminiExtractionProvider(key, model, endpoint || undefined);
   if (name === 'groq') return new GroqExtractionProvider(key, model, visionModel || model, endpoint || undefined);
-  throw new AppError('WhatsApp ordering currently supports Gemini and Groq. Select one in Connections.', 400);
+  throw new AppError('Order extraction supports Gemini and Groq. Select one in Settings → Connections.', 400);
 }
 /** Saved tenant configuration takes precedence, including an explicitly cleared key. */
 export async function getBusinessAi(businessId: string) {

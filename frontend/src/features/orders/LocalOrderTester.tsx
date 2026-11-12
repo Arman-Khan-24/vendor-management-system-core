@@ -3,6 +3,7 @@ import { ApiClient } from '../../api/client';
 import { Badge,Button,ErrorNotice,Input,Select,Textarea } from '../../components/ui';
 import type { Customer } from '../../types';
 import { errorMessage } from '../../utils/formatters';
+import { readOrderPhoto } from '../../utils/orderPhoto';
 
 export function LocalOrderTester({customers,onQueued}:{customers:Customer[];onQueued:()=>void}){
   const [available,setAvailable]=useState(false);
@@ -15,9 +16,8 @@ export function LocalOrderTester({customers,onQueued}:{customers:Customer[];onQu
   const selected=customer||customers.find(value=>value.active)?.id||'';
   const photo=async(file?:File)=>{
     setImage(null);setError(null);if(!file)return;
-    if(!['image/png','image/jpeg'].includes(file.type)||file.size>5*1024*1024){setError('Choose a JPEG or PNG photo below 5 MB.');return;}
     setReading(true);
-    try{const data=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('The photo could not be read.'));reader.readAsDataURL(file);});setImage({data,mimeType:file.type,name:file.name});}
+    try{setImage(await readOrderPhoto(file));}
     catch(e){setError(errorMessage(e));}finally{setReading(false);}
   };
   const send=async(event:React.FormEvent)=>{

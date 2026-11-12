@@ -63,6 +63,8 @@ svg { flex-shrink: 0; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card { background: var(--surface); border-radius: var(--radius); padding: 24px; min-width: 0; }
 .card-button { text-align: left; border: 0; color: inherit; width: 100%; }
+.order-import { padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-alt); }
+.order-import svg { vertical-align: middle; }
 .card-button:hover { background: var(--surface-hover); }
 .tonal { background: var(--accent-soft); color: var(--accent-ink); }
 .tonal-peach { background: var(--peach); color: var(--peach-ink); }
@@ -735,3 +737,4 @@ td .text-link { text-align: left; color: var(--text); }
 
 .whatsapp-message-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .whatsapp-webhook-url { overflow-wrap: anywhere; margin: 8px 0; }
+.settings-fields { border: 0; margin: 0; padding: 0; min-width: 0; }

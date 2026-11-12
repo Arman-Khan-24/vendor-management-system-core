@@ -20,7 +20,7 @@ export function WhatsAppSettings({ onDirtyChange }: { onDirtyChange: (dirty: boo
     catch(e) { setError(errorMessage(e)); }
   };
   useEffect(() => { void load(); },[]);
-  const update = (fields: Partial<Draft>) => { setDraft(value => value ? { ...value,...fields } : null); setNotice(null); };
+  const update = (fields: Partial<Draft>) => { setDraft(value => value ? { ...value,...fields } : null); setNotice(null); setError(null); };
   const save = async (event: React.FormEvent) => {
     event.preventDefault(); if (!draft || !stored) return;
     setBusy(true);setError(null);setNotice(null);
@@ -43,7 +43,7 @@ export function WhatsAppSettings({ onDirtyChange }: { onDirtyChange: (dirty: boo
   return <div className="stack">
     <SectionHeading title="WhatsApp ordering" description="Connect your Meta test number, then enable ordering when the webhook is ready." action={<Badge variant={stored?.enabled ? 'success':'default'}>{stored?.enabled ? 'Enabled':'Disabled'}</Badge>} />
     <ErrorNotice message={error} focus retry={!draft ? load : undefined} />
-    {!draft ? !error && <LoadingState label="Loading WhatsApp connection…" /> : <form className="stack" onSubmit={save}>
+    {!draft ? !error && <LoadingState label="Loading WhatsApp connection…" /> : <form onSubmit={save}><fieldset className="stack settings-fields" disabled={busy}>
       <ol className="help-steps"><li>Create a Meta developer app with WhatsApp access.</li><li>Add your own phone as a verified test recipient.</li><li>Save the IDs, API version and credentials below.</li><li>Configure the webhook URL and subscribe to messages in Meta.</li><li>Save and test Gemini/Groq above, then enable ordering.</li></ol>
       <p><a className="text-link" href="https://whatsappbusiness.com/developers/developer-hub/" target="_blank" rel="noreferrer">Open Meta’s developer setup</a></p>
       <div className="form-grid">
@@ -56,11 +56,11 @@ export function WhatsAppSettings({ onDirtyChange }: { onDirtyChange: (dirty: boo
         <Input label={label} type="password" autoComplete="new-password" value={draft[key]} disabled={draft[clear]} maxLength={4096} onChange={e=>update({[key]:e.target.value})} placeholder={draft[has]?'Leave blank to keep saved value':'Enter '+label.toLowerCase()} hint={draft[has]?'Encrypted value saved.':'Saved values remain private on your server.'} />
         {draft[has] && <label className="check-options"><input type="checkbox" checked={draft[clear]} onChange={e=>update({[clear]:e.target.checked,[key]:''})} />Remove saved {label.toLowerCase()}</label>}
       </div>)}
-      <div className="form-note"><strong>Webhook URL</strong><p className="whatsapp-webhook-url">{ApiClient.getBase().replace(/\/api$/,'') || window.location.origin}/webhooks/whatsapp/{draft.businessId}</p><p>Meta requires a public HTTPS URL. Use the same verify token in Meta and here.</p></div>
+      <div className="form-note"><strong>Webhook URL</strong><p className="whatsapp-webhook-url">{ApiClient.getServerAddress() || window.location.origin}/webhooks/whatsapp/{draft.businessId}</p><p>Meta requires a public HTTPS URL. Use the same verify token in Meta and here.</p></div>
       <Switch label="Enable WhatsApp ordering" description="Verified customer messages can create orders after customer confirmation." checked={draft.enabled} onChange={enabled=>update({enabled})} />
       {notice && <p className="success-note" role="status"><CheckCircle2 size={16} className="inline" aria-hidden="true" /> {notice}</p>}
       <div className="form-actions"><Button variant="outline" onClick={test} disabled={dirty||busy}><Link2 size={17} aria-hidden="true" />Test saved Meta connection</Button><Button type="submit" disabled={!dirty} busy={busy}><Save size={17} aria-hidden="true" />Save WhatsApp connection</Button></div>
       {dirty && <p className="form-note">Save your changes before testing the connection.</p>}
-    </form>}
+    </fieldset></form>}
   </div>;
 }

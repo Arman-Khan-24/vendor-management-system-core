@@ -59,6 +59,10 @@ export type BusinessPatch = Partial<Omit<BusinessUpdate, 'settings'>> & {
 export interface ProductInput { name: string; unit: string; currentPrice: number; category?: string }
 export interface CustomerInput { name: string; phone: string; creditTermsDays: number }
 export interface OrderInput { customerId: string; notes?: string; items: { productId: string; quantity: number }[] }
+export interface OrderImportResult {
+  items: { productId: string; quantity: number | null; inputProduct: string; inputQuantity: number; inputUnit: string }[];
+  warnings: string[];
+}
 export interface PaymentInput { customerId: string; amount: number; mode: PaymentMode; date: string; reference?: string; notes?: string }
 
 export interface User {

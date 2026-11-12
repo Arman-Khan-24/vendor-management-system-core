@@ -13,6 +13,7 @@ export interface MatchedOrderItem {
 
 export interface CatalogMatchResult {
   matchedItems: MatchedOrderItem[];
+  reviewItems: ExtractedOrderItem[];
   unresolvedItems: string[];
   ambiguousItems: Array<{ input: string; candidates: string[] }>;
   isValid: boolean;
@@ -28,20 +29,22 @@ export class CatalogMatcher {
     catalog: CatalogItemContext[]
   ): CatalogMatchResult {
     const matchedItems: MatchedOrderItem[] = [];
+    const reviewItems: ExtractedOrderItem[] = [];
     const unresolvedItems: string[] = [];
     const ambiguousItems: Array<{ input: string; candidates: string[] }> = [];
 
     const add = (item: ExtractedOrderItem, product: CatalogItemContext) => {
-      if (!item.unit.trim()) { unresolvedItems.push(`${item.product}: please specify a unit`); return; }
+      if (!item.unit.trim()) { unresolvedItems.push(`${item.product}: please specify a unit`); reviewItems.push(item); return; }
       const quantity = convertQuantity(item.quantity, item.unit, product.unit);
       if (quantity === null) {
+        reviewItems.push(item);
         unresolvedItems.push(`${item.product}: cannot convert ${item.quantity} ${item.unit} to ${product.unit} exactly; please clarify`);
         return;
       }
       const previous = matchedItems.find(value => value.productId === product.id);
       if (previous) {
         const combined = Math.round((previous.quantity + quantity) * 100) / 100;
-        if (combined > 99999999.99) { unresolvedItems.push(`${item.product}: quantity is too large`); return; }
+        if (combined > 99999999.99) { unresolvedItems.push(`${item.product}: quantity is too large`); reviewItems.push(item); return; }
         previous.quantity = combined;
         previous.totalPrice = Math.round(Math.round(combined * 100) * Math.round(previous.unitPrice * 100) / 100) / 100;
       } else {
@@ -54,6 +57,7 @@ export class CatalogMatcher {
       const qty = Number(item.quantity);
 
       if (!Number.isFinite(qty) || qty <= 0) {
+        reviewItems.push(item);
         unresolvedItems.push(`${item.product} (invalid quantity ${item.quantity})`);
         continue;
       }
@@ -85,6 +89,7 @@ export class CatalogMatcher {
           }
         }
         // Unit was not specified or didn't match: flag ambiguity!
+        reviewItems.push(item);
         ambiguousItems.push({
           input: item.product,
           candidates: exactCandidates.map(c => `${c.name} (${c.unit})`)
@@ -118,12 +123,14 @@ export class CatalogMatcher {
         add(item, found);
       } else if (candidates.length > 1) {
         // Multiple products/units plausible - do NOT silently guess
+        reviewItems.push(item);
         ambiguousItems.push({
           input: item.product,
           candidates: candidates.map(c => `${c.name} (${c.unit})`)
         });
       } else {
         // Not in catalog
+        reviewItems.push(item);
         unresolvedItems.push(item.product);
       }
     }
@@ -132,6 +139,7 @@ export class CatalogMatcher {
 
     return {
       matchedItems,
+      reviewItems,
       unresolvedItems,
       ambiguousItems,
       isValid
