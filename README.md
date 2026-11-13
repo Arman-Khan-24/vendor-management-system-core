@@ -33,7 +33,7 @@ Catalog, customer, order, payment, and invoice lists render 24 records per page.
 
 The **WhatsApp inbox** shows incoming text/photo orders, extraction warnings, confirmation drafts and delivery states. Valid orders receive a summary; customers must reply YES before a ledger order is created. Owners can review unclear items and send a fresh summary. Jobs persist in PostgreSQL, including retries and processing leases; Redis is not required.
 
-The backend API address is a browser/device setting, also available on the sign-in screen. A final `/api` is optional; blank uses the website's `/api` address. Use HTTPS for a remote server. Test the connection before signing in; changing servers clears the current login.
+The backend API address is a browser/device setting, also available on the sign-in screen. A final `/api` is optional; blank uses the deployment's configured API, or the website's `/api` address when no API is configured. The published app connects directly to its Render API to avoid proxy throttling. Readiness probes allow up to 65 seconds for startup; a payment is sent only after readiness succeeds and keeps its retry key if the result is unconfirmed. Use HTTPS for a remote server. Test the connection before signing in; changing servers clears the current login.
 
 Database credentials, JWT secrets, and hosting settings belong in the server environment. Keep `JWT_SECRET` stable: it also protects stored provider keys. If it is rotated, users must sign in again and provider keys must be re-entered before future integration use.
 

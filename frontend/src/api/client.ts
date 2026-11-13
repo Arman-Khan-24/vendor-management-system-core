@@ -12,15 +12,17 @@ async function fetchApi(url: string, options: RequestInit = {}): Promise<Respons
   const signal = options.signal ?? AbortSignal.timeout(CONNECTION_TIMEOUT);
   const deadline = Date.now() + CONNECTION_TIMEOUT;
   const read = ['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase());
+  const startupProbe = read && url.endsWith('/health');
   for (let attempt = 0; ; attempt++) {
     const response = await fetch(url, { ...options, signal });
-    if (!read || attempt >= 3 || ![429, 502, 503, 504].includes(response.status)) return response;
+    if (!read || (!startupProbe && attempt >= 3) || ![429, 502, 503, 504].includes(response.status)) return response;
     const retryAfter = response.headers.get('Retry-After');
     const seconds = retryAfter === null ? NaN : Number(retryAfter);
     const delay = retryAfter === null ? 1000 * 2 ** attempt
       : Number.isFinite(seconds) ? Math.max(0, seconds * 1000)
       : Math.max(0, Date.parse(retryAfter) - Date.now());
-    const wait = Number.isFinite(delay) ? Math.max(1000, delay) : 1000 * 2 ** attempt;
+    const backoff = Number.isFinite(delay) ? Math.max(1000, delay) : 1000 * 2 ** attempt;
+    const wait = startupProbe && retryAfter === null ? Math.min(backoff, 5000) : backoff;
     if (Date.now() + wait >= deadline || signal.aborted) return response;
     await response.body?.cancel().catch(() => undefined);
     await new Promise<void>((resolve, reject) => {
@@ -84,7 +86,7 @@ export class ApiClient {
   static wouldChangeServer(value: string): boolean {
     try { return this.getServerAddress(value) !== this.getServerAddress(); } catch { return true; }
   }
-  static getBase(): string { return normalizeApiUrl(this.getConnection()) + '/api'; }
+  static getBase(): string { return this.getServerAddress() + '/api'; }
   static setConnection(value: string) {
     const normalized = connectionAddress(value);
     const changedServer = this.wouldChangeServer(value);
@@ -93,7 +95,7 @@ export class ApiClient {
     if (changedServer) window.dispatchEvent(new Event('orderledger:connection'));
   }
   static async testConnection(value: string) {
-    const base = connectionAddress(value);
+    const base = this.getServerAddress(value);
     const probe = async (path: string) => {
       try { return await fetchApi(base + path, { credentials: 'omit', redirect: 'error', cache: 'no-store' }); }
       catch (error) {
@@ -164,7 +166,7 @@ export class ApiClient {
       if (!identity.userId || !identity.businessId) throw new Error();
     } catch { throw new ApiError('Your session has expired. Sign in again.', 401); }
     const scope = JSON.stringify([(this.getServerAddress() || normalizeApiUrl(this.getConnection())) + '/api', identity.businessId, identity.userId, endpoint]);
-    const previousScope = JSON.stringify([base, identity.businessId, identity.userId, endpoint]);
+    const previousScope = JSON.stringify([normalizeApiUrl(this.getConnection()) + '/api', identity.businessId, identity.userId, endpoint]);
     return pendingWrite(scope, body, async key => {
       let response: Response;
       try {

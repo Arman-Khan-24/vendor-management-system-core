@@ -1,4 +1,4 @@
-"""Test production proxy, settings recovery and order imports with synthetic API responses."""
+"""Test production API routing, settings recovery and order imports with synthetic responses."""
 import argparse
 import base64
 import json
@@ -41,7 +41,7 @@ with sync_playwright() as p:
             else: route.abort()
             return
         requests.append(route.request.url)
-        assert route.request.url.startswith(args.base_url), 'Saved Render URL bypassed the website proxy'
+        assert route.request.url.startswith('https://orderledger-api.onrender.com/'), 'The default API did not use the configured direct Render connection'
         if nonlocal_path == '/api/orders/extract' or route.request.method == 'PATCH' or (nonlocal_path == '/api/customers' and route.request.method == 'POST'):
             pending.append(route)
             return
@@ -77,7 +77,7 @@ with sync_playwright() as p:
     expect(page.get_by_label('Primary model', exact=True)).to_be_enabled()
     expect(page.get_by_label('Primary model', exact=True)).to_have_value('changed-model')
     page.get_by_role('button', name='Discard provider changes').click()
-    print('PASS Production proxy preserves login, correct webhook URL, malformed settings recovery and failed-save drafts', flush=True)
+    print('PASS Direct production API preserves login, correct webhook URL, malformed settings recovery and failed-save drafts', flush=True)
 
     page.get_by_role('banner').get_by_role('button', name='New order', exact=True).click()
     dialog = page.get_by_role('dialog', name='Create an order')
