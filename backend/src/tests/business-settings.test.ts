@@ -83,7 +83,11 @@ test('provider endpoints reject embedded credentials and secrets in query or fra
   assert.equal(updateBusinessConnectionsSchema.safeParse({ primary: { provider: 'unsupported-provider' } }).success, false);
 });
 
-test('connection summaries omit credentials and defaults make no active model claim', () => {
+test('connection summaries omit credentials and Gemini defaults do not claim a saved key', () => {
+  const initial = normalizeBusinessConnections([]);
+  assert.equal(initial.primary.provider, 'gemini');
+  assert.equal(initial.primary.model, 'gemini-2.5-flash');
+  assert.equal(initial.primary.hasApiKey, false);
   const row = { slot: 'primary' as const, provider: 'custom' as const, endpoint: 'https://ai.example.com/v1', model: 'tenant-model', has_api_key: true, api_key_encrypted: 'must-not-leak' };
   const connections = normalizeBusinessConnections([row]);
   assert.equal(connections.primary.hasApiKey, true);

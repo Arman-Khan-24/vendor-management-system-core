@@ -25,7 +25,10 @@ def passed(name):
 
 
 def fits(page):
+    # Chromium updates dynamic viewport units on the next rendering frame after resize.
+    page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), 'Horizontal page overflow'
+    assert page.evaluate('document.documentElement.scrollHeight <= innerHeight + 1'), 'Page exceeds viewport height; content should scroll inside the workspace or sign-in panel'
 
 
 with sync_playwright() as p:

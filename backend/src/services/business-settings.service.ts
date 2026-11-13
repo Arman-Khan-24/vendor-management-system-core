@@ -67,7 +67,7 @@ export interface ConnectionSummaryRow {
 
 export function normalizeBusinessConnections(rows: readonly ConnectionSummaryRow[]): BusinessConnections {
   const connections: BusinessConnections = {
-    primary: { provider: 'openai', endpoint: 'https://api.openai.com/v1', model: '', hasApiKey: false },
+    primary: { provider: 'gemini', endpoint: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-2.5-flash', hasApiKey: false },
     fallback: { provider: 'groq', endpoint: 'https://api.groq.com/openai/v1', model: '', hasApiKey: false }
   };
   for (const row of rows) {

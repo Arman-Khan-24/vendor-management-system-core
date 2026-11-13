@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Archive, ArrowUpRight, Download, Pencil, Plus, RotateCcw, Users } from 'lucide-react';
-import { Badge, Button, EmptyState, ErrorNotice, Input, Modal, PageHeader, Pagination, SearchBox, usePagination } from '../../components/ui';
+import { Badge, Button, EmptyState, ErrorNotice, Modal, PageHeader, Pagination, SearchBox, usePagination } from '../../components/ui';
+import { CustomerModal } from './CustomerModal';
 import type { Customer, CustomerInput } from '../../types';
 import { downloadCsv, errorMessage } from '../../utils/formatters';
 import { useBusiness } from '../settings/businessSettings';
@@ -17,29 +18,12 @@ export function CustomersView({ customers, onSelectCustomer, onCreateCustomer, o
   const [filter, setFilter] = useState('active');
   const [editing, setEditing] = useState<Customer | 'new' | null>(null);
   const [archive, setArchive] = useState<Customer | null>(null);
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [terms, setTerms] = useState('7');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const visible = customers.filter(c => (filter === 'archived' ? !c.active : c.active) && (filter !== 'dues' || Number(c.outstanding_balance) > 0) && (c.name + ' ' + c.phone).toLowerCase().includes(search.toLowerCase()));
   const pages = usePagination(visible, JSON.stringify([filter, search]));
   const open = (customer: Customer | 'new') => {
-    setEditing(customer); setError(null);
-    setName(customer === 'new' ? '' : customer.name);
-    setPhone(customer === 'new' ? '' : customer.phone);
-    setTerms(String(customer === 'new' ? settings.billing.defaultCreditTermsDays : customer.credit_terms_days));
-  };
-  const save = async (event: React.FormEvent) => {
-    event.preventDefault(); setBusy(true); setError(null);
-    try {
-      if (!name.trim()) throw new Error('Enter a customer name.');
-      const data = { name: name.trim(), phone: phone.trim(), creditTermsDays: Number(terms) };
-      if (editing === 'new') await onCreateCustomer(data);
-      else if (editing) await onUpdateCustomer(editing.id, data);
-      setEditing(null);
-    } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
+    setEditing(customer);
   };
   const changeActive = async (customer: Customer, active: boolean) => {
     setBusy(true); setActionError(null);
@@ -59,9 +43,7 @@ export function CustomersView({ customers, onSelectCustomer, onCreateCustomer, o
       </div>)}</div>}
     <Pagination {...pages} />
     <p className="muted small">{visible.length} matching {visible.length === 1 ? 'account' : 'accounts'}</p>
-    <Modal isOpen={!!editing} title={editing === 'new' ? 'Add a customer' : 'Edit customer'} onClose={() => setEditing(null)} busy={busy}>
-      <form className="stack" onSubmit={save}><ErrorNotice message={error} /><Input label="Customer name" autoFocus value={name} maxLength={255} required onChange={e => setName(e.target.value)} placeholder="e.g. Green Leaf Café" /><Input label="Phone number" type="tel" value={phone} minLength={5} maxLength={25} required onChange={e => setPhone(e.target.value)} placeholder="+91 98765 43210" /><Input label="Payment terms (days)" type="number" min="0" max="365" step="1" value={terms} required onChange={e => setTerms(e.target.value)} hint="Use 0 for payment due on the invoice date. New terms apply to new orders." /><div className="form-actions"><Button variant="ghost" disabled={busy} onClick={() => setEditing(null)}>Cancel</Button><Button type="submit" busy={busy}>Save customer</Button></div></form>
-    </Modal>
+    {editing && <CustomerModal customer={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} onSubmit={data => editing === 'new' ? onCreateCustomer(data) : onUpdateCustomer(editing.id, data)} />}
     <Modal isOpen={!!archive} title="Archive customer?" onClose={() => setArchive(null)} busy={busy}><div className="stack"><p><strong>{archive?.name}</strong> will be hidden from new orders. You can still view statements, receive payments, and restore the account.</p>{Number(archive?.outstanding_balance) > 0 && <p className="form-note">This account has {money(archive?.outstanding_balance)} outstanding.</p>}<ErrorNotice message={actionError} /><div className="form-actions"><Button variant="ghost" disabled={busy} onClick={() => setArchive(null)}>Keep customer</Button><Button variant="danger" busy={busy} onClick={() => archive && changeActive(archive, false)}>Archive customer</Button></div></div></Modal>
   </div>;
 }

@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:api": "node --experimental-vm-modules --test scripts/api-recovery.test.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.479.0",

@@ -122,8 +122,8 @@ test('provider keys stay encrypted, tenant-scoped and unchanged unless explicitl
 
   const otherConnections = await request(other.token, '/api/business/connections');
   assert.equal(otherConnections.data.primary.hasApiKey, false);
-  assert.equal(otherConnections.data.primary.provider, 'openai');
-  assert.equal(otherConnections.data.primary.model, '');
+  assert.equal(otherConnections.data.primary.provider, 'gemini');
+  assert.equal(otherConnections.data.primary.model, 'gemini-2.5-flash');
 
   const invalid = await request(owner.token, '/api/business/connections', { primary: { endpoint: 'https://ai.example.test/v1?key=hidden' } });
   assert.equal(invalid.status, 400);

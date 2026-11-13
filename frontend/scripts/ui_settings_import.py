@@ -42,7 +42,7 @@ with sync_playwright() as p:
             return
         requests.append(route.request.url)
         assert route.request.url.startswith(args.base_url), 'Saved Render URL bypassed the website proxy'
-        if nonlocal_path == '/api/orders/extract' or route.request.method == 'PATCH':
+        if nonlocal_path == '/api/orders/extract' or route.request.method == 'PATCH' or (nonlocal_path == '/api/customers' and route.request.method == 'POST'):
             pending.append(route)
             return
         if nonlocal_path == '/health': data = {'status': 'ok', 'service': 'OrderLedger Core API', 'apiVersion': 2, 'capabilities': {'idempotentWrites': True}}
@@ -81,6 +81,28 @@ with sync_playwright() as p:
 
     page.get_by_role('banner').get_by_role('button', name='New order', exact=True).click()
     dialog = page.get_by_role('dialog', name='Create an order')
+    dialog.get_by_label('Quantity 1', exact=True).fill('3')
+    dialog.get_by_label('Order notes', exact=True).fill('Deliver before lunch')
+    dialog.get_by_role('button', name='New customer', exact=True).click()
+    customer_dialog = page.get_by_role('dialog', name='Add a customer', exact=True)
+    customer_dialog.get_by_label('Customer name').fill('New QA Cafe')
+    customer_dialog.get_by_label('Phone number').fill('9876543210')
+    customer_dialog.get_by_role('button', name='Save customer').click()
+    expect(customer_dialog.get_by_label('Customer name')).to_be_disabled()
+    pending.pop(0).fulfill(status=409, content_type='application/json', body=json.dumps({'error': 'Phone number already exists'}))
+    expect(customer_dialog.get_by_text('Phone number already exists')).to_be_visible()
+    expect(customer_dialog.get_by_label('Customer name')).to_have_value('New QA Cafe')
+    customer_dialog.get_by_label('Phone number').fill('9876543211')
+    customer_dialog.get_by_role('button', name='Save customer').click()
+    new_customer = dict(customer, id='00000000-0000-4000-8000-000000000005', name='New QA Cafe', phone='9876543211', credit_terms_days=7)
+    fixtures['/api/customers'].append(new_customer)
+    pending.pop(0).fulfill(status=201, content_type='application/json', body=json.dumps(new_customer))
+    expect(customer_dialog).not_to_be_visible()
+    expect(dialog.get_by_label('Customer', exact=True)).to_have_value(new_customer['id'])
+    expect(dialog.get_by_label('Quantity 1', exact=True)).to_have_value('3')
+    expect(dialog.get_by_label('Order notes', exact=True)).to_have_value('Deliver before lunch')
+    print('PASS New customer recovers from duplicate phone errors and is selected without losing the order draft', flush=True)
+
     dialog.get_by_role('button', name='From text or photo').click()
     dialog.get_by_role('button', name='Extract items').click()
     expect(dialog.get_by_text('Paste an order or upload a photo first.')).to_be_visible()
@@ -89,7 +111,17 @@ with sync_playwright() as p:
     expect(dialog.get_by_role('button', name='Create order', exact=True)).to_be_disabled()
     pending.pop(0).fulfill(status=502, content_type='application/json', body=json.dumps({'error': 'Synthetic extraction failure'}))
     expect(dialog.get_by_text('Synthetic extraction failure', exact=False)).to_be_visible()
-    expect(dialog.get_by_label('Quantity 1', exact=True)).to_have_value('1')
+    expect(dialog.get_by_label('Quantity 1', exact=True)).to_have_value('3')
+    dialog.get_by_role('button', name='AI connection', exact=True).click()
+    ai_dialog = page.get_by_role('dialog', name='AI connections', exact=True)
+    expect(ai_dialog.get_by_label('Primary model')).to_have_value('synthetic-model')
+    ai_dialog.get_by_label('Primary model').fill('unsaved-model')
+    expect(ai_dialog.get_by_role('button', name='Back to order')).to_be_disabled()
+    ai_dialog.get_by_role('button', name='Discard provider changes').click()
+    ai_dialog.get_by_role('button', name='Back to order').click()
+    expect(dialog.get_by_label('Order text or photo caption')).to_have_value('Tomato 500g and another 1kg, mystery item 2 boxes')
+    expect(dialog.get_by_label('Order notes')).to_have_value('Deliver before lunch')
+    print('PASS AI settings open inside the order, protect unsaved changes and preserve the order text and notes', flush=True)
     dialog.get_by_role('button', name='Extract items').click()
     pending.pop(0).fulfill(content_type='application/json', body=json.dumps(draft))
     expect(dialog.get_by_label('Quantity 1', exact=True)).to_have_value('1.5')

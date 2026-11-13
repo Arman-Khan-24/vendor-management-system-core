@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Plus, ShoppingBag, Trash2 } from 'lucide-react';
 import { Button, EmptyState, ErrorNotice, Input, LoadingState, Modal, Select, Textarea } from '../../components/ui';
-import type { Customer, OrderInput, OrderImportResult, Product } from '../../types';
+import type { Customer, CustomerInput, OrderInput, OrderImportResult, Product } from '../../types';
+import { CustomerModal } from '../customers/CustomerModal';
+import { ProviderConnections } from '../settings/ConnectionSettings';
 import { OrderImportPanel } from './OrderImportPanel';
 import { errorMessage } from '../../utils/formatters';
 import { useBusiness } from '../settings/businessSettings';
 
-export function NewOrderModal({ isOpen, onClose, customers, products, loading = false, onSubmit, onSetup }: { isOpen: boolean; onClose: () => void; customers: Customer[]; products: Product[]; loading?: boolean; onSubmit: (data: OrderInput) => Promise<void>; onSetup: (tab: string) => void }) {
+export function NewOrderModal({ isOpen, onClose, customers, products, loading = false, onSubmit, onSetup, onCreateCustomer }: { isOpen: boolean; onClose: () => void; customers: Customer[]; products: Product[]; loading?: boolean; onSubmit: (data: OrderInput) => Promise<void>; onSetup: (tab: string) => void; onCreateCustomer: (data: CustomerInput) => Promise<Customer> }) {
   const { settings, money } = useBusiness();
   const availableCustomers = customers.filter(c => c.active);
   const availableProducts = products.filter(p => p.active);
@@ -19,6 +21,10 @@ export function NewOrderModal({ isOpen, onClose, customers, products, loading = 
   const [warnings, setWarnings] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [addingCustomer, setAddingCustomer] = useState(false);
+  const [aiSettings, setAiSettings] = useState(false);
+  const [aiDirty, setAiDirty] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
   const firstCustomerId = availableCustomers[0]?.id;
   const firstProductId = availableProducts[0]?.id;
   useEffect(() => {
@@ -44,13 +50,14 @@ export function NewOrderModal({ isOpen, onClose, customers, products, loading = 
     } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
   const ready = availableCustomers.length > 0 && availableProducts.length > 0;
-  return <Modal isOpen={isOpen} onClose={onClose} title="Create an order" wide busy={busy || importBusy}>
-    {!ready ? loading ? <LoadingState label="Loading customers and products…" /> : <EmptyState icon={<ShoppingBag size={28} />} title={!availableProducts.length ? 'Add your products first' : 'Add your first customer'} description="An order needs an active customer and at least one product." action={<Button onClick={() => { onClose(); onSetup(!availableProducts.length ? 'products' : 'customers'); }}>{!availableProducts.length ? 'Open catalog' : 'Add a customer'}</Button>} /> :
+  return <><Modal isOpen={isOpen} onClose={onClose} title="Create an order" wide busy={busy || importBusy || addingCustomer || aiSettings}>
+    {!ready ? loading ? <LoadingState label="Loading customers and products…" /> : <EmptyState icon={<ShoppingBag size={28} />} title={!availableProducts.length ? 'Add your products first' : 'Add your first customer'} description="An order needs an active customer and at least one product." action={<Button onClick={() => { if (!availableProducts.length) { onClose(); onSetup('products'); } else setAddingCustomer(true); }}>{!availableProducts.length ? 'Open catalog' : 'Add a customer'}</Button>} /> :
       <form className="stack" onSubmit={submit}>
         <ErrorNotice message={error} focus />
         <Select label="Customer" value={customerId} disabled={busy || importBusy} required onChange={e => setCustomerId(e.target.value)}><option value="" disabled>Choose a customer</option>{availableCustomers.map(c => <option key={c.id} value={c.id}>{c.name} · {c.phone}</option>)}</Select>
+        <Button variant="outline" size="sm" disabled={busy || importBusy} onClick={() => setAddingCustomer(true)}><Plus size={17} aria-hidden="true" />New customer</Button>
         <div className="chips" aria-label="Order entry method"><button type="button" className={'chip ' + (mode === 'manual' ? 'selected' : '')} aria-pressed={mode === 'manual'} disabled={busy || importBusy} onClick={() => setMode('manual')}>Manual entry</button><button type="button" className={'chip ' + (mode === 'import' ? 'selected' : '')} aria-pressed={mode === 'import'} disabled={busy || importBusy} onClick={() => setMode('import')}>From text or photo</button></div>
-        <div hidden={mode !== 'import'}><OrderImportPanel disabled={busy} onExtracted={extracted} onBusyChange={setImportBusy} /></div>
+        <div hidden={mode !== 'import'}><OrderImportPanel disabled={busy} onExtracted={extracted} onBusyChange={setImportBusy} onOpenConnections={() => setAiSettings(true)} /></div>
         {imported && <div className="form-note" role="status"><strong>Draft filled. Review products and quantities below.</strong>{warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div>}
         <div className="row between"><h3>Order items</h3><Button variant="ghost" size="sm" disabled={busy || importBusy || items.length >= availableProducts.length} onClick={() => setItems(list => [...list, { key: crypto.randomUUID(), productId: availableProducts.find(p => !list.some(i => i.productId === p.id))?.id || '', quantity: '1' }])}><Plus size={17} aria-hidden="true" />Add item</Button></div>
         {items.map((item, index) => {
@@ -66,5 +73,10 @@ export function NewOrderModal({ isOpen, onClose, customers, products, loading = 
         <div className="total-box"><div><strong style={{ fontSize: 14 }}>Order total</strong><p className="small">Prices are saved when you place the order.</p></div><strong className="numeric">{money(subtotal + tax)}</strong></div>
         <div className="form-actions"><Button variant="ghost" disabled={busy || importBusy} onClick={onClose}>Cancel</Button><Button type="submit" busy={busy} disabled={importBusy}>Create order</Button></div>
       </form>}
-  </Modal>;
+  </Modal>
+    {addingCustomer && <CustomerModal onClose={() => setAddingCustomer(false)} onSubmit={async data => { const customer = await onCreateCustomer(data); setCustomerId(customer.id); }} />}
+    {aiSettings && <Modal isOpen title="AI connections" onClose={() => setAiSettings(false)} busy={aiDirty || aiBusy}>
+      <div className="stack"><p className="form-note">Your order draft is kept while you connect Gemini or Groq.</p><ProviderConnections onDirtyChange={setAiDirty} onBusyChange={setAiBusy} /><Button variant="outline" disabled={aiDirty || aiBusy} onClick={() => setAiSettings(false)}>Back to order</Button></div>
+    </Modal>}
+  </>;
 }

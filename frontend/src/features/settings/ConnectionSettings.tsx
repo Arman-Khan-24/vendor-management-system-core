@@ -20,15 +20,20 @@ export function ServerConnection({ signedIn = false, onDirtyChange }: { signedIn
   const save = () => {
     try { normalizeApiUrl(endpoint); ApiClient.setConnection(endpoint); setEndpoint(ApiClient.getConnection()); setTested(null); setError(null); setSaved(true); } catch (e) { setError(errorMessage(e)); }
   };
+  const useWebsiteServer = () => {
+    ApiClient.setConnection(''); setEndpoint(''); setTested(null); setError(null); setSaved(true);
+  };
   return <div className="stack">
-    <SectionHeading title="Your app server" description="This connection is saved on this device." />
-    <Input label="Backend API address" type="url" value={endpoint} disabled={busy} onChange={e => { setEndpoint(e.target.value); setTested(null); setError(null); setSaved(false); }} placeholder="Use this website’s server" hint="Leave blank to use this website’s server. Enter an address only to connect a different server." />
+    <SectionHeading title="Your app server" description="The website's server is already configured. You do not need an API key to sign in." />
+    <p className="form-note">{ApiClient.getServerAddress() ? 'Saved server: ' + ApiClient.getServerAddress() : 'Using this website’s server.'}</p>
+    <Input label="Backend API address" type="url" value={endpoint} disabled={busy} onChange={e => { setEndpoint(e.target.value); setTested(null); setError(null); setSaved(false); }} placeholder="Use this website’s server" hint="Optional. Leave blank for the configured server. This field accepts a website address, never an API key." />
     {busy && <p className="form-note" role="status">Connecting… A sleeping server can take up to a minute to start.</p>}
     <ErrorNotice message={error} />
     {tested === endpoint && <p className="success-note" role="status">Connection verified. The server and database are responding.</p>}
     {saved && <p className="success-note" role="status">Connection saved.</p>}
     <p className="form-note">{signedIn ? 'Changing servers signs you out. Sign in with an account on the new server.' : 'Your login details will be sent to this server. Test the address before signing in.'}</p>
     <div className="row wrap"><Button variant="outline" busy={busy} onClick={test}><Link2 size={17} aria-hidden="true" />Test connection</Button><Button onClick={save} disabled={busy || endpoint === ApiClient.getConnection()}><Server size={17} aria-hidden="true" />{changesServer ? 'Save & sign out' : 'Save connection'}</Button></div>
+    {ApiClient.getConnection() && <Button variant="ghost" disabled={busy} onClick={useWebsiteServer}>{signedIn && ApiClient.wouldChangeServer('') ? 'Use website server & sign out' : 'Use website server'}</Button>}
   </div>;
 }
 
@@ -40,7 +45,7 @@ const providerDefaults = {
   groq: { endpoint: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile' },
   custom: { endpoint: '', model: '' },
 };
-export function ProviderConnections({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
+export function ProviderConnections({ onDirtyChange, onBusyChange }: { onDirtyChange: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void }) {
   const [draft, setDraft] = useState<{ primary: ProviderDraft; fallback: ProviderDraft } | null>(null);
   const [stored, setStored] = useState<Connections | null>(null);
   const [busy, setBusy] = useState(false);
@@ -48,6 +53,7 @@ export function ProviderConnections({ onDirtyChange }: { onDirtyChange: (dirty: 
   const [saved, setSaved] = useState(false);
   const [testResult,setTestResult] = useState<string | null>(null);
   const dirty = !!draft && !!stored && JSON.stringify(draft) !== JSON.stringify(toDraft(stored));
+  useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false); }, [busy, onBusyChange]);
   useEffect(() => { onDirtyChange(dirty); return () => onDirtyChange(false); }, [dirty, onDirtyChange]);
   const load = async () => {
     setError(null);
@@ -67,7 +73,7 @@ export function ProviderConnections({ onDirtyChange }: { onDirtyChange: (dirty: 
     catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
   return <div className="stack">
-    <SectionHeading title="AI provider connections" description="Gemini and Groq read text and photos in New order. The same connection also handles incoming WhatsApp orders." />
+    <SectionHeading title="AI provider connections" description="Gemini and Groq read text and photos in New order. The same connection also handles incoming WhatsApp orders. If no business connection is saved, the website’s configured AI is used." />
     <ErrorNotice message={error} retry={!draft ? load : undefined} />
     {!draft ? !error && <LoadingState label="Loading connections…" /> : <form onSubmit={save}><fieldset className="stack settings-fields" disabled={busy}>
       {(['primary', 'fallback'] as const).map(key => <div className="stack" key={key}>

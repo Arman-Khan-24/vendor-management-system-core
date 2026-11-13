@@ -46,6 +46,20 @@ test('unknown, incompatible and excessive combined quantities remain visible for
   });
 });
 
+test('provider quota rejection remains a 429 without replaying extraction', async () => {
+  await extraction([], async () => {
+    let calls = 0;
+    globalThis.fetch = async () => { calls++; return Response.json({}, { status: 429 }); };
+    await assert.rejects(() => OrderImportService.extract(businessId, { text: 'Tomato 2 kg' }), (error: any) => {
+      assert.equal(error.statusCode, 429);
+      assert.match(error.message, /rate or quota limit/);
+      assert.doesNotMatch(error.message, /synthetic-key/);
+      return true;
+    });
+    assert.equal(calls, 1);
+  });
+});
+
 test('photo import forwards bytes and caption; invalid photos and empty extraction fail clearly', async () => {
   await extraction([{ product: 'Tomato', quantity: 2, unit: 'kg' }], async requests => {
     const data = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]).toString('base64');

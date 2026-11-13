@@ -143,6 +143,15 @@ export function App() {
     setToast(message);
     void refresh();
   };
+  const createCustomer = async (data: CustomerInput) => {
+    const version = session.current;
+    const customer = await ApiClient.createCustomer(data);
+    if (session.current === version) {
+      setCustomers(list => [...list.filter(item => item.id !== customer.id), customer]);
+      setToast('Customer added.'); void refresh();
+    }
+    return customer;
+  };
   const openOrder = async (selected: Order) => {
     const version = ++detail.current;
     setOrder(selected); setInvoiceId(null); setStatementId(null); setOrderError(null); setOrderLoading(true);
@@ -176,7 +185,7 @@ export function App() {
   };
   if (authLoading) return <BusinessProvider business={null}><LoadingState label="Opening your workspace…" /></BusinessProvider>;
   if (!user || !business) return <BusinessProvider business={null}>
-    {authError ? <div className="auth-content" style={{ minHeight: '100dvh' }}><div className="auth-form stack"><h2>Let’s reconnect.</h2><ErrorNotice message={authError} /><Button onClick={() => void checkAuth()}><RefreshCw size={18} aria-hidden="true" />Try again</Button><Button variant="outline" onClick={() => setConnectionOpen(true)}><Link2 size={18} aria-hidden="true" />Check server connection</Button><Button variant="ghost" onClick={logout}>Back to sign in</Button></div></div> :
+    {authError ? <div className="auth-content" style={{ minHeight: '100dvh' }}><div className="auth-form stack"><h2>Let’s reconnect.</h2><ErrorNotice message={authError} /><p className="form-note">Your server is already configured. A sleeping server may take a minute to start. Retry first; no API key is needed.</p><Button onClick={() => void checkAuth()}><RefreshCw size={18} aria-hidden="true" />Try again</Button><Button variant="outline" onClick={() => setConnectionOpen(true)}><Link2 size={18} aria-hidden="true" />Check server connection</Button><Button variant="ghost" onClick={logout}>Back to sign in</Button></div></div> :
       <AuthView onSuccess={(account, tenant) => { session.current++; setUser(account); setBusiness(tenant); setTab('dashboard'); }} />}
     <Modal isOpen={connectionOpen} onClose={() => setConnectionOpen(false)} title="Server connection"><ServerConnection /></Modal>
   </BusinessProvider>;
@@ -187,7 +196,7 @@ export function App() {
         {loadingData && !summary && tab !== 'settings' ? <LoadingState /> : <>
           {tab === 'dashboard' && (summary ? <DashboardView summary={summary} customers={customers} products={products} orders={orders} payments={payments} invoices={invoices} userName={user.name} onNavigateTab={navigate} onOpenNewOrder={() => setNewOrder(true)} onOpenRecordPayment={openPayment} onSelectOrder={openOrder} onStatement={openStatement} onInvoice={openInvoice} /> : <EmptyState title="Your overview could not load" description="Try refreshing once the server is available." action={<Button onClick={() => void refresh()}>Refresh overview</Button>} />)}
           {tab === 'products' && <ProductsView products={products} onCreateProduct={(data: ProductInput) => saveMutation(() => ApiClient.createProduct(data), 'Product added.')} onUpdateProduct={(id, data) => saveMutation(() => ApiClient.updateProduct(id, data), data.active === false ? 'Product archived.' : data.active === true ? 'Product restored.' : 'Product updated.')} onCustomize={() => { setSettingsSection('catalog'); navigate('settings'); }} />}
-          {tab === 'customers' && <CustomersView customers={customers} onSelectCustomer={c => void openStatement(c.id)} onCreateCustomer={(data: CustomerInput) => saveMutation(() => ApiClient.createCustomer(data), 'Customer added.')} onUpdateCustomer={(id, data) => saveMutation(() => ApiClient.updateCustomer(id, data), data.active === false ? 'Customer archived.' : data.active === true ? 'Customer restored.' : 'Customer updated.')} onRecordPayment={openPayment} />}
+          {tab === 'customers' && <CustomersView customers={customers} onSelectCustomer={c => void openStatement(c.id)} onCreateCustomer={async data => { await createCustomer(data); }} onUpdateCustomer={(id, data) => saveMutation(() => ApiClient.updateCustomer(id, data), data.active === false ? 'Customer archived.' : data.active === true ? 'Customer restored.' : 'Customer updated.')} onRecordPayment={openPayment} />}
           {tab === 'orders' && <OrdersView orders={orders} onSelectOrder={openOrder} onOpenNewOrder={() => setNewOrder(true)} />}
           {tab === 'invoices' && <InvoicesView invoices={invoices} onSelect={i => void openInvoice(i.id)} />}
           {tab === 'payments' && settings.modules.payments && <PaymentsView payments={payments} onOpenRecord={() => openPayment()} onStatement={openStatement} />}
@@ -197,7 +206,7 @@ export function App() {
         </>}
       </div></ErrorBoundary>
     </AppShell>
-    {newOrder && <NewOrderModal isOpen onClose={() => setNewOrder(false)} customers={customers} products={products} loading={loadingData} onSubmit={(data: OrderInput) => saveMutation(() => ApiClient.createOrder(data), 'Order created.')} onSetup={navigate} />}
+    {newOrder && <NewOrderModal isOpen onClose={() => setNewOrder(false)} customers={customers} products={products} loading={loadingData} onSubmit={(data: OrderInput) => saveMutation(() => ApiClient.createOrder(data), 'Order created.')} onSetup={navigate} onCreateCustomer={createCustomer} />}
     {paymentFor !== null && <RecordPaymentModal customers={customers} initialCustomerId={paymentFor} onClose={() => setPaymentFor(null)} onSubmit={(data: PaymentInput) => saveMutation(() => ApiClient.recordPayment(data), 'Payment recorded.')} onSetup={() => { setPaymentFor(null); navigate('customers'); }} />}
     {order && <OrderDetailModal order={order} loading={orderLoading} loadError={orderError} onClose={() => { detail.current++; setOrder(null); }} onUpdateStatus={updateOrder} onInvoice={openInvoice} />}
     {invoiceId && (invoice ? <InvoiceModal invoice={invoice} onClose={() => { detail.current++; setInvoiceId(null); }} onPayment={openPayment} onStatement={openStatement} /> : <Modal isOpen title="Invoice" onClose={() => { detail.current++; setInvoiceId(null); }}>{invoiceError ? <ErrorNotice message={invoiceError} retry={() => void openInvoice(invoiceId)} /> : <LoadingState label="Loading invoice…" />}</Modal>)}

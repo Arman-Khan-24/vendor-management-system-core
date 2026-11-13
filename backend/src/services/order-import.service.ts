@@ -31,7 +31,10 @@ export class OrderImportService {
         provider: result.provider, model: result.model, wasFallback: result.wasFallback
       };
     } catch (error) {
-      if (error instanceof ProviderError) throw new AppError('Order extraction failed (' + error.code + '). Check the saved AI connection and use an image-capable model for photos.', 502);
+      if (error instanceof ProviderError) {
+        if (error.code === 'PROVIDER_HTTP_429') throw new AppError('Your AI provider has reached its rate or quota limit. Wait before retrying, check the provider quota, or configure a working fallback in AI connections.', 429);
+        throw new AppError('Order extraction failed (' + error.code + '). Check the saved AI connection and use an image-capable model for photos.', 502);
+      }
       throw error;
     }
   }

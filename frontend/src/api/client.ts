@@ -7,6 +7,31 @@ const TOKEN_KEY = 'orderledger_token';
 const CONNECTION_KEY = 'orderledger_api_url';
 const CONNECTION_TIMEOUT = 65000;
 
+// Share one startup allowance across retries. Only reads are safe to replay.
+async function fetchApi(url: string, options: RequestInit = {}): Promise<Response> {
+  const signal = options.signal ?? AbortSignal.timeout(CONNECTION_TIMEOUT);
+  const deadline = Date.now() + CONNECTION_TIMEOUT;
+  const read = ['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase());
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(url, { ...options, signal });
+    if (!read || attempt >= 3 || ![429, 502, 503, 504].includes(response.status)) return response;
+    const retryAfter = response.headers.get('Retry-After');
+    const seconds = retryAfter === null ? NaN : Number(retryAfter);
+    const delay = retryAfter === null ? 1000 * 2 ** attempt
+      : Number.isFinite(seconds) ? Math.max(0, seconds * 1000)
+      : Math.max(0, Date.parse(retryAfter) - Date.now());
+    const wait = Number.isFinite(delay) ? Math.max(1000, delay) : 1000 * 2 ** attempt;
+    if (Date.now() + wait >= deadline || signal.aborted) return response;
+    await response.body?.cancel().catch(() => undefined);
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(signal.reason); };
+      const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, wait);
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
+    });
+  }
+}
+
 export class ApiError extends Error {
   constructor(message: string, public status: number, public requestId?: string) {
     super(message + (requestId && status >= 500 ? ' Reference: ' + requestId : ''));
@@ -70,7 +95,7 @@ export class ApiClient {
   static async testConnection(value: string) {
     const base = connectionAddress(value);
     const probe = async (path: string) => {
-      try { return await fetch(base + path, { signal: AbortSignal.timeout(CONNECTION_TIMEOUT), credentials: 'omit', redirect: 'error', cache: 'no-store' }); }
+      try { return await fetchApi(base + path, { credentials: 'omit', redirect: 'error', cache: 'no-store' }); }
       catch (error) {
         throw new Error(error instanceof Error && error.name === 'TimeoutError' ? 'The server took too long to respond. Try again shortly.' : 'Cannot reach this server. Check the address and your internet connection, then try again.');
       }
@@ -94,7 +119,7 @@ export class ApiClient {
     if (token) headers.set('Authorization', 'Bearer ' + token);
     let response: Response;
     try {
-      response = await fetch(base + endpoint, { ...options, headers, credentials: 'omit', redirect: 'error', signal: options.signal || AbortSignal.timeout(CONNECTION_TIMEOUT) });
+      response = await fetchApi(base + endpoint, { ...options, headers, credentials: 'omit', redirect: 'error' });
     } catch (error) {
       const retryHint = headers.has('Idempotency-Key') ? ' Your submission is unconfirmed. Retry with the same details; it will not be recorded twice.' : '';
       if (error instanceof Error && error.name === 'TimeoutError') throw new ApiError('The server took too long to respond.' + (retryHint || ' Check your connection, then refresh before retrying a save.'), 0);
@@ -108,6 +133,10 @@ export class ApiClient {
         window.dispatchEvent(new Event('orderledger:unauthorized'));
       }
       let message = typeof data.error === 'string' ? data.error : typeof data.message === 'string' ? data.message : 'Request failed (' + response.status + ').';
+      if (!body && [429, 502, 503, 504].includes(response.status)) {
+        message = response.status === 429 ? 'The server is receiving too many requests. Wait a moment, then try again. No API key or new server address is needed.'
+          : 'The server is starting or temporarily unavailable. Try again shortly. No API key or new server address is needed.';
+      }
       if (data.details && Array.isArray(data.details)) {
         message += ' ' + data.details.map((d: { message?: unknown; path?: unknown } | null) => {
           const path = Array.isArray(d?.path) ? d.path.join('.') : typeof d?.path === 'string' ? d.path : '';
@@ -139,7 +168,7 @@ export class ApiClient {
     return pendingWrite(scope, body, async key => {
       let response: Response;
       try {
-        response = await fetch(base.replace(/\/api$/, '') + '/health', { signal: AbortSignal.timeout(CONNECTION_TIMEOUT), credentials: 'omit', redirect: 'error', cache: 'no-store' });
+        response = await fetchApi(base.replace(/\/api$/, '') + '/health', { credentials: 'omit', redirect: 'error', cache: 'no-store' });
       } catch { throw new ApiError('Cannot confirm the server is ready. Your submission has not been sent. Check your connection and retry.', 0); }
       if (!response.ok) throw new ApiError('The server or database is not ready. Your submission has not been sent. Please retry shortly.', 503);
       const health = await response.json().catch(() => null);
