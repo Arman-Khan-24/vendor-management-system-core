@@ -36,7 +36,7 @@ export class PaymentRepository {
     });
   }
 
-  /** Customer account payment with bounded explicit allocations or oldest-invoice-first settlement. */
+  /** Fully allocated payment capped at the customer's current billed balance. */
   static async recordPayment({ businessId, customerId, amount, mode = 'cash', date, reference, notes, createdBy, specificInvoiceAllocations, idempotencyKey }: {
     businessId: string; customerId: string; amount: number; mode?: PaymentMode; date?: string;
     reference?: string; notes?: string; createdBy?: string; idempotencyKey?: string;
@@ -55,8 +55,18 @@ export class PaymentRepository {
       if (!settings.modules.payments) throw new AppError('Payments are disabled in business settings.', 403);
       if (!settings.billing.paymentMethods.includes(mode)) throw new AppError('This payment method is disabled in business settings.', 400);
       // Archived customers can still settle their historical invoices.
-      const customer = await client.query('SELECT id, name FROM customers WHERE id = $1 AND business_id = $2 FOR UPDATE', [customerId, businessId]);
+      const customer = await client.query(
+        `SELECT c.id, c.name,
+          COALESCE((SELECT SUM(i.total) FROM invoices i WHERE i.customer_id = c.id AND i.business_id = c.business_id), 0) -
+          COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.customer_id = c.id AND p.business_id = c.business_id), 0) AS outstanding
+         FROM customers c WHERE c.id = $1 AND c.business_id = $2 FOR UPDATE`, [customerId, businessId]);
       if (!customer.rows[0]) throw new AppError('Customer not found for this business.', 400);
+      const amountCents = Math.round(amount * 100);
+      const outstandingCents = Math.max(0, Math.round(Number(customer.rows[0].outstanding) * 100));
+      if (outstandingCents === 0) throw new AppError('This customer has no unpaid invoices. Create an invoice before recording a payment.', 400);
+      if (amountCents > outstandingCents) {
+        throw new AppError('Payment cannot exceed the total unpaid invoice balance of ' + (outstandingCents / 100).toFixed(2) + '.', 400);
+      }
       const specific = specificInvoiceAllocations?.length ? specificInvoiceAllocations : undefined;
       if (specific) {
         const ids = new Set(specific.map(a => a.invoiceId));
@@ -65,14 +75,14 @@ export class PaymentRepository {
           throw new AppError('Each allocation must be a positive amount with at most two decimal places.', 400);
         }
         const requestedCents = specific.reduce((sum, a) => sum + Math.round(a.amount * 100), 0);
-        if (requestedCents > Math.round(amount * 100)) throw new AppError('Invoice allocations exceed the payment amount.', 400);
+        if (requestedCents !== amountCents) throw new AppError('Invoice allocations must add up to the full payment amount.', 400);
       }
       const inserted = await client.query(
         `INSERT INTO payments (business_id, customer_id, amount, mode, date, reference, notes, created_by)
          VALUES ($1, $2, $3, $4, COALESCE($5::date, CURRENT_DATE), $6, $7, $8) RETURNING *, date::text AS date`,
         [businessId, customerId, amount, mode, date ?? null, reference || null, notes || null, createdBy || null]);
       const payment = inserted.rows[0];
-      let remainingCents = Math.round(amount * 100);
+      let remainingCents = amountCents;
       const invoiceParams: unknown[] = [customerId, businessId];
       let invoiceFilter = "AND i.status IN ('Pending', 'Partial')";
       if (specific) { invoiceParams.push(specific.map(a => a.invoiceId)); invoiceFilter = 'AND i.id = ANY($3::uuid[])'; }
@@ -93,6 +103,7 @@ export class PaymentRepository {
         remainingCents -= allocationCents;
         await InvoiceRepository.refreshInvoiceStatus(client, invoice.id, businessId);
       }
+      if (remainingCents !== 0) throw new AppError('The full payment must settle unpaid invoices. Refresh the customer balance and try again.', 400);
       const allocations = await client.query(`${allocationSelect} WHERE pa.payment_id = $1 AND pa.business_id = $2 ORDER BY i.invoice_no`, [payment.id, businessId]);
       const result = { ...payment, amount: Number(payment.amount), customer_name: customer.rows[0].name,
         unallocated_amount: remainingCents / 100, allocations: allocations.rows.map(a => ({ ...a, amount: Number(a.amount) })) };

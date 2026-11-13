@@ -53,6 +53,8 @@ test('business settings reject unknown fields and invalid operational values', (
     { settings: { billing: { defaultCreditTermsDays: -1 } } },
     { settings: { billing: { paymentMethods: [] } } },
     { settings: { billing: { paymentMethods: ['cash', 'cash'] } } },
+    { settings: { billing: { upiId: 'not-a-upi-id' } } },
+    { settings: { billing: { upiId: 'shop@bank?am=1' } } },
     { settings: { catalog: { units: ['kg', 'KG'] } } },
     { settings: { modules: { whatsapp: true } } },
     { settings: { apiKey: 'private-value' } },
@@ -64,6 +66,15 @@ test('business settings reject unknown fields and invalid operational values', (
   assert.deepEqual(updateBusinessSettingsSchema.parse({ currency: ' inr ', invoiceTrigger: 'Packed', logoUrl: '' }), {
     currency: 'INR', invoiceTrigger: 'Packed', logoUrl: ''
   });
+});
+
+test('legacy billing gets blank UPI settings and partial updates preserve merchant details', () => {
+  const initial = normalizeBusinessSettings({ billing: { taxRate: 5 } });
+  assert.equal(initial.billing.upiId, '');
+  const configured = mergeBusinessSettings(initial, { billing: { upiId: 'merchant@orderledger', upiPayeeName: 'Merchant QA' } });
+  const updated = mergeBusinessSettings(configured, { billing: { taxRate: 10 } });
+  assert.equal(updated.billing.upiId, 'merchant@orderledger');
+  assert.equal(updated.billing.upiPayeeName, 'Merchant QA');
 });
 
 test('provider endpoints reject embedded credentials and secrets in query or fragment', () => {

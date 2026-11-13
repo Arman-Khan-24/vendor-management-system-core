@@ -29,7 +29,9 @@ const billingSchema = z.object({
   defaultCreditTermsDays: z.number().int().min(0).max(365),
   paymentMethods: z.array(z.enum(['cash', 'upi', 'bank_transfer', 'cheque'])).min(1).max(4).refine(uniqueValues, 'Payment methods must be unique'),
   taxRate: z.number().finite().min(0).max(100).multipleOf(0.01),
-  footer: z.string().trim().max(1000)
+  footer: z.string().trim().max(1000),
+  upiId: z.string().trim().max(255).refine(value => value === '' || /^[a-zA-Z0-9][a-zA-Z0-9._-]*@[a-zA-Z][a-zA-Z0-9.-]*$/.test(value), 'Enter a UPI ID such as yourbusiness@bank').default(''),
+  upiPayeeName: z.string().trim().max(100).default('')
 }).strict();
 
 const modulesSchema = z.object({

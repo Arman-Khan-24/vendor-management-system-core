@@ -21,7 +21,7 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   },
   billing: {
     invoicePrefix: 'INV', defaultCreditTermsDays: 7,
-    paymentMethods: ['cash', 'upi', 'bank_transfer', 'cheque'], taxRate: 0, footer: ''
+    paymentMethods: ['cash', 'upi', 'bank_transfer', 'cheque'], taxRate: 0, footer: '', upiId: '', upiPayeeName: ''
   },
   modules: { reports: true, payments: true }
 };

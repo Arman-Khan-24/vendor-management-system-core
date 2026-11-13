@@ -20,7 +20,7 @@ export interface BusinessSettings {
   branding: { appName: string; tagline: string; accent: Accent; theme: Theme };
   profile: { address: string; email: string; taxId: string };
   catalog: { productLabel: string; customerLabel: string; defaultUnit: string; units: string[]; categories: string[] };
-  billing: { invoicePrefix: string; defaultCreditTermsDays: number; paymentMethods: PaymentMode[]; taxRate: number; footer: string };
+  billing: { invoicePrefix: string; defaultCreditTermsDays: number; paymentMethods: PaymentMode[]; taxRate: number; footer: string; upiId: string; upiPayeeName: string };
   modules: { reports: boolean; payments: boolean };
 }
 

@@ -162,7 +162,7 @@ test('equal invoices and equal payments are all counted in customer list, detail
   assert.equal(statement.currentOutstanding, 150);
 });
 
-test('FIFO payments settle oldest invoices first and keep any overpayment as credit', async () => {
+test('FIFO payments settle several invoices and reject any amount above the remaining balance', async () => {
   const { customer, product } = await fixture();
   const first = await invoiceFor((await makeOrder(customer.id, product.id)).id);
   const second = await invoiceFor((await makeOrder(customer.id, product.id)).id);
@@ -173,8 +173,16 @@ test('FIFO payments settle oldest invoices first and keep any overpayment as cre
   assert.equal((await request(`/api/invoices/${first.id}`)).data.status, 'Paid');
   assert.equal((await request(`/api/invoices/${second.id}`)).data.status, 'Partial');
   const remainder = await request('/api/payments', { customerId: customer.id, amount: 100 });
-  assert.equal(remainder.data.unallocated_amount, 50);
+  assert.equal(remainder.status, 400);
+  assert.match(remainder.data.error, /50.00/);
+  assert.equal((await request(`/api/payments?customerId=${customer.id}`)).data.length, 1);
+  assert.equal((await request(`/api/invoices/${second.id}`)).data.remaining_amount, 50);
+  const settled = await request('/api/payments', { customerId: customer.id, amount: 50 });
+  assert.equal(settled.status, 201);
+  assert.equal(settled.data.unallocated_amount, 0);
   assert.equal((await request(`/api/invoices/${second.id}`)).data.remaining_amount, 0);
+  const nextInvoice = await invoiceFor((await makeOrder(customer.id, product.id)).id);
+  assert.equal(nextInvoice.remaining_amount, 100);
 });
 
 test('explicit allocation cannot overpay an invoice or partially save invalid allocations', async () => {
@@ -187,6 +195,10 @@ test('explicit allocation cannot overpay an invoice or partially save invalid al
   assert.equal((await request(`/api/invoices/${invoice.id}`)).data.remaining_amount, 40);
   const duplicate = await request('/api/payments', { customerId: customer.id, amount: 20, specificInvoiceAllocations: [{ invoiceId: invoice.id, amount: 10 }, { invoiceId: invoice.id, amount: 10 }] });
   assert.equal(duplicate.status, 400);
+  assert.equal((await request(`/api/payments?customerId=${customer.id}`)).data.length, 1);
+  const incomplete = await request('/api/payments', { customerId: customer.id, amount: 20, specificInvoiceAllocations: [{ invoiceId: invoice.id, amount: 10 }] });
+  assert.equal(incomplete.status, 400);
+  assert.match(incomplete.data.error, /full payment amount/);
   assert.equal((await request(`/api/payments?customerId=${customer.id}`)).data.length, 1);
 });
 
@@ -202,16 +214,54 @@ test('concurrent allocations recheck invoice balances under locks', async () => 
   assert.equal(saved.remaining_amount, 20);
 });
 
-test('advance payments remain credit and settle new invoices without negative invoice balances', async () => {
+test('payments require unpaid invoices and cannot create advances or credit', async () => {
   const { customer, product } = await fixture();
   const advance = await request('/api/payments', { customerId: customer.id, amount: 150, mode: 'cash' });
-  assert.equal(advance.status, 201);
-  assert.equal(advance.data.unallocated_amount, 150);
+  assert.equal(advance.status, 400);
+  assert.match(advance.data.error, /no unpaid invoices/);
+  const order = await makeOrder(customer.id, product.id);
+  assert.equal((await request('/api/payments', { customerId: customer.id, amount: 50 })).status, 400);
+  const invoice = await invoiceFor(order.id);
+  assert.equal(invoice.status, 'Pending');
+  assert.equal(invoice.remaining_amount, 100);
+  assert.equal((await request(`/api/payments?customerId=${customer.id}`)).data.length, 0);
+  assert.equal((await request(`/api/customers/${customer.id}/statement`)).data.currentOutstanding, 100);
+});
+
+test('three pending bills share one payment cap after partial settlement', async () => {
+  const { customer, product } = await fixture(400);
+  const invoices = [];
+  for (let i = 0; i < 3; i++) invoices.push(await invoiceFor((await makeOrder(customer.id, product.id)).id));
+  assert.equal((await request('/api/payments', { customerId: customer.id, amount: 200 })).status, 201);
+  assert.equal((await request('/api/payments', { customerId: customer.id, amount: 1000.01 })).status, 400);
+  const payment = await request('/api/payments', { customerId: customer.id, amount: 1000 });
+  assert.equal(payment.status, 201);
+  assert.equal(payment.data.unallocated_amount, 0);
+  assert.equal(payment.data.allocations.length, 3);
+  for (const invoice of invoices) assert.equal((await request(`/api/invoices/${invoice.id}`)).data.remaining_amount, 0);
+  assert.equal((await request('/api/payments', { customerId: customer.id, amount: 0.01 })).status, 400);
+  assert.equal((await request(`/api/customers/${customer.id}/statement`)).data.currentOutstanding, 0);
+});
+
+test('automatic concurrent payments cannot jointly exceed a 400 bill', async () => {
+  const { customer, product } = await fixture(400);
   const invoice = await invoiceFor((await makeOrder(customer.id, product.id)).id);
-  assert.equal(invoice.status, 'Paid');
-  assert.equal(invoice.remaining_amount, 0);
-  assert.equal((await request(`/api/payments?customerId=${customer.id}`)).data[0].unallocated_amount, 50);
-  assert.equal((await request(`/api/customers/${customer.id}/statement`)).data.currentOutstanding, -50);
+  assert.equal((await request('/api/payments', { customerId: customer.id, amount: 450 })).status, 400);
+  const concurrent = await Promise.all([250, 250].map(amount => request('/api/payments', { customerId: customer.id, amount })));
+  assert.deepEqual(concurrent.map(result => result.status).sort(), [201, 400]);
+  assert.equal((await request(`/api/invoices/${invoice.id}`)).data.remaining_amount, 150);
+  assert.equal((await request('/api/payments', { customerId: customer.id, amount: 150 })).status, 201);
+  const payments = (await request(`/api/payments?customerId=${customer.id}`)).data;
+  assert.equal(payments.reduce((sum: number, payment: any) => sum + payment.amount, 0), 400);
+  assert.ok(payments.every((payment: any) => payment.unallocated_amount === 0));
+});
+
+test('a decimal bill accepts its exact balance and rejects an extra cent', async () => {
+  const { customer, product } = await fixture(100.01);
+  await invoiceFor((await makeOrder(customer.id, product.id)).id);
+  assert.equal((await request('/api/payments', { customerId: customer.id, amount: 100.02 })).status, 400);
+  assert.equal((await request('/api/payments', { customerId: customer.id, amount: 100.01 })).status, 201);
+  assert.equal((await request(`/api/customers/${customer.id}/statement`)).data.currentOutstanding, 0);
 });
 
 test('tax rate, credit terms, item prices and invoice prefix are historical snapshots', async () => {
@@ -265,7 +315,8 @@ test('tenant boundaries and role permissions are enforced on ledger mutations', 
 });
 
 test('configured payment methods and module switches control new payment saves', async () => {
-  const { customer } = await fixture();
+  const { customer, product } = await fixture();
+  await invoiceFor((await makeOrder(customer.id, product.id)).id);
   await request('/api/business', { settings: { billing: { paymentMethods: ['upi'] } } }, 'PATCH');
   assert.equal((await request('/api/payments', { customerId: customer.id, amount: 10, mode: 'cash' })).status, 400);
   assert.equal((await request('/api/payments', { customerId: customer.id, amount: 10, mode: 'upi' })).status, 201);
@@ -404,6 +455,10 @@ test('retry keys are scoped to the business and operation', async () => {
   const other = registration.data;
   const customer = await request('/api/customers', { name: 'Other customer', phone: '9995553331' }, 'POST', other.token);
   const own = await fixture();
+  await invoiceFor((await makeOrder(own.customer.id, own.product.id)).id);
+  const product = await request('/api/products', { name: 'Retry product', unit: 'kg', currentPrice: 100 }, 'POST', other.token);
+  const otherOrder = await request('/api/orders', { customerId: customer.data.id, items: [{ productId: product.data.id, quantity: 1 }] }, 'POST', other.token);
+  assert.equal((await request(`/api/invoices/order/${otherOrder.data.id}/generate`, {}, 'POST', other.token)).status, 201);
   const headers = { 'Idempotency-Key': randomUUID() };
   const paymentA = await request('/api/payments', { customerId: own.customer.id, amount: 1 }, 'POST', owner.token, headers);
   const paymentB = await request('/api/payments', { customerId: customer.data.id, amount: 1 }, 'POST', other.token, headers);

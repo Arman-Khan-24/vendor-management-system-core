@@ -6,6 +6,7 @@ import { downloadFile, errorMessage } from '../../utils/formatters';
 import { getSettings, presets } from './businessSettings';
 import { ProviderConnections, ServerConnection } from './ConnectionSettings';
 import { WhatsAppSettings } from './WhatsAppSettings';
+import { UpiPaymentPanel } from '../payments/UpiPaymentPanel';
 
 const paymentLabels: Record<PaymentMode, string> = { cash: 'Cash', upi: 'UPI', bank_transfer: 'Bank transfer', cheque: 'Cheque' };
 const sections = [
@@ -43,10 +44,11 @@ function CommaList({ label, values, onChange, hint }: { label: string; values: s
     onChange(parsed);
   }} />;
 }
-type Blueprint = { format: 'orderledger-blueprint'; version: 1; currency: string; invoiceTrigger: 'Packed' | 'Delivered'; categoryTemplate: string; settings: Omit<BusinessSettings, 'profile'> };
+type Blueprint = { format: 'orderledger-blueprint'; version: 1; currency: string; invoiceTrigger: 'Packed' | 'Delivered'; categoryTemplate: string; settings: Omit<BusinessSettings, 'profile' | 'billing'> & { billing: Omit<BusinessSettings['billing'], 'upiId' | 'upiPayeeName'> } };
 function exportBlueprint(business: Business): Blueprint {
   const { branding, catalog, billing, modules } = getSettings(business);
-  return { format: 'orderledger-blueprint', version: 1, currency: business.currency, invoiceTrigger: business.invoice_trigger, categoryTemplate: business.category_template || 'custom', settings: { branding, catalog, billing, modules } };
+  const { upiId, upiPayeeName, ...billingDefaults } = billing;
+  return { format: 'orderledger-blueprint', version: 1, currency: business.currency, invoiceTrigger: business.invoice_trigger, categoryTemplate: business.category_template || 'custom', settings: { branding, catalog, billing: billingDefaults, modules } };
 }
 function readBlueprint(value: unknown): Blueprint {
   const object = (v: unknown): Record<string, any> => { if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('This file is not a valid OrderLedger blueprint.'); return v as Record<string, any>; };
@@ -166,6 +168,9 @@ export function SettingsView({ business, user, onSave, onDirtyChange, initialSec
                   <Input label="Default payment terms (days)" type="number" min="0" max="365" step="1" value={s.billing.defaultCreditTermsDays} required onChange={e => setting('billing', { defaultCreditTermsDays: Number(e.target.value) })} hint="Used when adding new customers." /><Input label="Tax rate (%)" type="number" min="0" max="100" step="0.01" value={s.billing.taxRate} required onChange={e => setting('billing', { taxRate: Number(e.target.value) })} hint="One tax rate applied to new orders." /></div>
                 <div><p className="small" style={{ fontWeight: 750, marginBottom: 12 }}>Accepted payment methods</p><div className="check-options">{(Object.keys(paymentLabels) as PaymentMode[]).map(mode => <label key={mode}><input type="checkbox" checked={s.billing.paymentMethods.includes(mode)} onChange={e => setting('billing', { paymentMethods: e.target.checked ? [...s.billing.paymentMethods, mode] : s.billing.paymentMethods.filter(m => m !== mode) })} />{paymentLabels[mode]}</label>)}</div></div>
                 <Textarea label="Invoice footer" value={s.billing.footer} maxLength={500} onChange={e => setting('billing', { footer: e.target.value })} />
+                <SectionHeading title="Direct UPI payments" description="Amount-specific QR codes on invoices and customer statements. Confirm receipt yourself, then record the payment." />
+                <div className="form-grid"><Input label="Merchant UPI ID" value={s.billing.upiId} maxLength={255} onChange={e => setting('billing', { upiId: e.target.value })} placeholder="yourbusiness@bank" hint="Use your own UPI ID. Leave blank for a clearly labelled demo preview." /><Input label="UPI payee name" value={s.billing.upiPayeeName} maxLength={100} onChange={e => setting('billing', { upiPayeeName: e.target.value })} placeholder={draft.name} hint="Your bank or UPI app verifies the actual receiver name when a customer pays." /></div>
+                {draft.currency === 'INR' ? <UpiPaymentPanel amount={300} reference="Sample bill" upiId={s.billing.upiId} payeeName={s.billing.upiPayeeName} /> : <p className="form-note">UPI QR payments use INR. This business is billed in {draft.currency}.</p>}
                 <p className="form-note">New tax rates, prefixes, and payment terms apply to future orders. Issued invoices retain their saved amounts and numbers.</p>
               </div>}
               {section === 'modules' && <div>
@@ -182,7 +187,7 @@ export function SettingsView({ business, user, onSave, onDirtyChange, initialSec
                 <div className="row between wrap"><div><h3>Export saved blueprint</h3><p className="muted small" style={{ marginTop: 5 }}>Branding, catalog defaults, billing, and feature choices.</p></div><Button variant="secondary" disabled={dirty} onClick={() => downloadFile(JSON.stringify(exportBlueprint(business), null, 2), 'orderledger-blueprint.json', 'application/json')}><Download size={17} aria-hidden="true" />Export blueprint</Button></div>
                 {dirty && <p className="small muted">Save your changes before exporting.</p>}
                 <div className="blueprint-file"><label htmlFor="blueprint-file">Import a blueprint</label><p className="muted small">Preview the settings before applying them to this business.</p><input id="blueprint-file" type="file" accept=".json,application/json" onChange={e => { void importFile(e.target.files?.[0]); e.target.value = ''; }} /></div>
-                <p className="form-note">Blueprints exclude customer records, orders, payments, business contact details, API keys, and the device’s server address. Presets never delete your existing catalog.</p>
+                <p className="form-note">Blueprints exclude customer records, orders, payments, business contact details, merchant UPI details, API keys, and the device’s server address. Presets never delete your existing catalog.</p>
               </div>}
             </div>
             <div className="settings-save"><p>{!business.settings ? 'Update the API to enable saving.' : saved && !dirty ? 'All changes saved.' : dirty ? 'You have unsaved changes.' : 'Your settings are up to date.'}</p><div className="row"><Button variant="ghost" disabled={!dirty || busy} onClick={() => { setDraft(businessDraft(business)); setError(null); setSaved(false); }}>Discard</Button><Button type="submit" disabled={!dirty || !business.settings} busy={busy}><Save size={17} aria-hidden="true" />Save changes</Button></div></div>
@@ -194,7 +199,7 @@ export function SettingsView({ business, user, onSave, onDirtyChange, initialSec
       <div className="stack"><p>This fills in units, categories, and default credit terms. Your existing products and financial records stay unchanged.</p><div className="form-note"><strong>Units:</strong> {preset?.units.join(', ')}<br /><strong>Payment terms:</strong> {preset?.credit} days</div><p className="muted small">Review the changes, then save your settings.</p><div className="form-actions"><Button variant="ghost" onClick={() => setPreset(null)}>Cancel</Button><Button onClick={applyPreset}><Check size={17} aria-hidden="true" />Apply to settings</Button></div></div>
     </Modal>
     <Modal isOpen={!!imported} title="Preview blueprint" onClose={() => setImported(null)}>
-      {imported && <div className="stack"><div className="preview-card" data-accent={imported.settings.branding.accent}><Upload size={23} aria-hidden="true" /><strong>{imported.settings.branding.appName}</strong><p>{imported.settings.branding.tagline}</p></div><div className="form-note"><p><strong>Currency:</strong> {imported.currency}</p><p><strong>Units:</strong> {imported.settings.catalog.units.join(', ')}</p><p><strong>Invoices:</strong> {imported.settings.billing.invoicePrefix}, on {imported.invoiceTrigger.toLowerCase()}</p><p><strong>Tax:</strong> {imported.settings.billing.taxRate}%</p></div><p className="muted small">This replaces configuration fields in the form. Business contact details and existing records stay unchanged. Review and save to apply.</p><div className="form-actions"><Button variant="ghost" onClick={() => setImported(null)}>Cancel</Button><Button onClick={() => { setDraft(d => ({ ...d, currency: imported.currency, invoiceTrigger: imported.invoiceTrigger, categoryTemplate: imported.categoryTemplate, settings: { ...imported.settings, profile: d.settings.profile } })); setImported(null); setSaved(false); }}>Apply to settings</Button></div></div>}
+      {imported && <div className="stack"><div className="preview-card" data-accent={imported.settings.branding.accent}><Upload size={23} aria-hidden="true" /><strong>{imported.settings.branding.appName}</strong><p>{imported.settings.branding.tagline}</p></div><div className="form-note"><p><strong>Currency:</strong> {imported.currency}</p><p><strong>Units:</strong> {imported.settings.catalog.units.join(', ')}</p><p><strong>Invoices:</strong> {imported.settings.billing.invoicePrefix}, on {imported.invoiceTrigger.toLowerCase()}</p><p><strong>Tax:</strong> {imported.settings.billing.taxRate}%</p></div><p className="muted small">This replaces configuration fields in the form. Business contact details and existing records stay unchanged. Review and save to apply.</p><div className="form-actions"><Button variant="ghost" onClick={() => setImported(null)}>Cancel</Button><Button onClick={() => { setDraft(d => ({ ...d, currency: imported.currency, invoiceTrigger: imported.invoiceTrigger, categoryTemplate: imported.categoryTemplate, settings: { ...imported.settings, billing: { ...d.settings.billing, ...imported.settings.billing }, profile: d.settings.profile } })); setImported(null); setSaved(false); }}>Apply to settings</Button></div></div>}
     </Modal>
   </div>;
 }

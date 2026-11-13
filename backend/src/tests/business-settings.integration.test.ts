@@ -59,7 +59,7 @@ test('business settings persist through partial PATCH requests and cannot change
       branding: { appName: 'Meadow Ledger', accent: 'lavender' },
       profile: { address: 'Nagpur', email: 'hello@example.test' },
       catalog: { defaultUnit: 'litre', categories: ['Milk', 'Eggs'] },
-      billing: { invoicePrefix: 'ML', defaultCreditTermsDays: 14, taxRate: 5, paymentMethods: ['upi', 'cash'] }
+      billing: { invoicePrefix: 'ML', defaultCreditTermsDays: 14, taxRate: 5, paymentMethods: ['upi', 'cash'], upiId: 'qa@orderledger', upiPayeeName: 'QA Merchant' }
     }
   });
   assert.equal(saved.status, 200, JSON.stringify(saved.data));
@@ -75,6 +75,8 @@ test('business settings persist through partial PATCH requests and cannot change
   assert.equal(loaded.data.settings.profile.address, 'Nagpur');
   assert.equal(loaded.data.settings.billing.taxRate, 5);
   assert.equal(loaded.data.settings.billing.defaultCreditTermsDays, 14);
+  assert.equal(loaded.data.settings.billing.upiId, 'qa@orderledger');
+  assert.equal(loaded.data.settings.billing.upiPayeeName, 'QA Merchant');
 
   const invalid = await request(owner.token, '/api/business', { settings: { catalog: { units: ['piece'] } } });
   assert.equal(invalid.status, 400);
@@ -155,12 +157,11 @@ test('currency can change before trading and is locked once an order exists', as
   assert.equal(allowed.data.phone, '9000000099');
 });
 
-test('a payment without an order also locks the business currency', async () => {
+test('a historical payment without an order still locks the business currency', async () => {
   const owner = await registerTenant('currency-payments');
   const customer = await request(owner.token, '/api/customers', { name: 'Advance customer', phone: '9000000002' }, 'POST');
   assert.equal(customer.status, 201);
-  const payment = await request(owner.token, '/api/payments', { customerId: customer.data.id, amount: 100, mode: 'cash' }, 'POST');
-  assert.equal(payment.status, 201, JSON.stringify(payment.data));
+  await pool.query('INSERT INTO payments (business_id, customer_id, amount, mode) VALUES ($1, $2, 100, $3)', [owner.business.id, customer.data.id, 'cash']);
   const rejected = await request(owner.token, '/api/business', { currency: 'USD' });
   assert.equal(rejected.status, 409, JSON.stringify(rejected.data));
 });

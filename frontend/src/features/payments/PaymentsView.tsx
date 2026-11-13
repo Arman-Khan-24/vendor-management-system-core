@@ -22,7 +22,7 @@ export function PaymentsView({ payments, onOpenRecord, onStatement }: { payments
       <div className="records">{pages.items.map(p => <div className="record-row" key={p.id}><div className="item-icon tonal"><ArrowDownLeft size={21} aria-hidden="true" /></div><div className="record-title"><strong>{p.customer_name}</strong><small>{formatDate(p.date)} · {p.reference || 'No reference'}</small></div><Badge>{paymentLabels[p.mode]}</Badge><div className="record-price numeric"><strong>{money(p.amount)}</strong><small>Received</small></div><div className="record-actions"><Button variant="secondary" size="sm" onClick={() => setDetail(p)}>Details</Button></div></div>)}</div>}
     <Pagination {...pages} />
     <Modal isOpen={!!detail} title="Payment details" onClose={() => setDetail(null)}>
-      {detail && <div className="stack"><div className="total-box"><span>Payment received</span><strong>{money(detail.amount)}</strong></div><div className="detail-lines">{[['Customer', detail.customer_name], ['Payment date', formatDate(detail.date)], ['Method', paymentLabels[detail.mode]], ['Reference', detail.reference || 'Not provided']].map(([label, value]) => <div className="detail-line" key={label}><span className="muted">{label}</span><strong>{value}</strong></div>)}</div>{detail.notes && <p className="form-note">{detail.notes}</p>}<p className="muted small">Payments settle the oldest unpaid invoices first. Any remainder stays as customer credit.</p><div className="form-actions"><Button variant="ghost" onClick={() => setDetail(null)}>Close</Button><Button onClick={() => { setDetail(null); onStatement(detail.customer_id); }}>View customer statement</Button></div></div>}
+      {detail && <div className="stack"><div className="total-box"><span>Payment received</span><strong>{money(detail.amount)}</strong></div><div className="detail-lines">{[['Customer', detail.customer_name], ['Payment date', formatDate(detail.date)], ['Method', paymentLabels[detail.mode]], ['Reference', detail.reference || 'Not provided']].map(([label, value]) => <div className="detail-line" key={label}><span className="muted">{label}</span><strong>{value}</strong></div>)}</div>{detail.notes && <p className="form-note">{detail.notes}</p>}<p className="muted small">Payments settle unpaid invoices and cannot exceed the customer's total balance due.</p><div className="form-actions"><Button variant="ghost" onClick={() => setDetail(null)}>Close</Button><Button onClick={() => { setDetail(null); onStatement(detail.customer_id); }}>View customer statement</Button></div></div>}
     </Modal>
   </div>;
 }
@@ -37,27 +37,31 @@ export function RecordPaymentModal({ customers, initialCustomerId, onClose, onSu
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const customer = customers.find(c => c.id === customerId);
-  const outstanding = Math.max(0, Number(customer?.outstanding_balance || 0));
-  const credit = Math.max(0, Number(amount || 0) - outstanding);
+  const outstanding = Math.max(0, Math.round(Number(customer?.outstanding_balance || 0) * 100) / 100);
+  const exceedsBalance = Math.round(Number(amount || 0) * 100) > Math.round(outstanding * 100);
+  const limitMessage = 'Payment cannot exceed the total unpaid invoice balance of ' + money(outstanding) + '.';
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); if (busy) return; setBusy(true); setError(null);
     try {
       if (!customerId || !customer) throw new Error('Choose a customer.');
       if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) throw new Error('Enter an amount greater than zero.');
+      if (outstanding === 0) throw new Error('This customer has no unpaid invoices. Create an invoice before recording a payment.');
+      if (exceedsBalance) throw new Error(limitMessage);
       await onSubmit({ customerId, amount: Number(amount), mode, date, reference: reference.trim(), notes: notes.trim() });
       onClose();
     } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
   return <Modal isOpen title="Record a payment" onClose={onClose} busy={busy}>
     {!customers.length ? <EmptyState title="Add a customer first" description="Payments are linked to a customer account." action={<Button onClick={onSetup}>Open customers</Button>} /> :
-      <form className="stack" onSubmit={submit}><ErrorNotice message={error} focus /><Select label="Customer" value={customerId} required onChange={e => setCustomerId(e.target.value)}><option value="" disabled>Choose a customer</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}{!c.active ? ' (archived)' : ''}</option>)}</Select>
+      <form className="stack" onSubmit={submit}><ErrorNotice message={error || (exceedsBalance ? limitMessage : null)} focus /><Select label="Customer" value={customerId} required disabled={busy} onChange={e => { setCustomerId(e.target.value); setError(null); }}><option value="" disabled>Choose a customer</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}{!c.active ? ' (archived)' : ''}</option>)}</Select>
         <div className="form-note row between"><span>Current balance due</span><strong>{money(outstanding)}</strong></div>
-        <Input label="Amount received" type="number" inputMode="decimal" min="0.01" step="0.01" value={amount} required onChange={e => setAmount(e.target.value)} placeholder="0.00" autoFocus />
+        {outstanding === 0 && <p className="form-note">This customer has no unpaid invoices. Create an invoice before recording a payment.</p>}
+        <Input label="Amount received" type="number" inputMode="decimal" min="0.01" max={outstanding} step="0.01" value={amount} required disabled={busy || outstanding === 0} onChange={e => { setAmount(e.target.value); setError(null); }} placeholder="0.00" hint={'Maximum payment: ' + money(outstanding) + ' across all unpaid invoices.'} autoFocus />
         <div className="form-grid"><Input label="Payment date" type="date" max={localDate()} value={date} required onChange={e => setDate(e.target.value)} /><Select label="Payment method" value={mode} onChange={e => setMode(e.target.value as PaymentMode)}>{settings.billing.paymentMethods.map(m => <option value={m} key={m}>{paymentLabels[m]}</option>)}</Select></div>
         <Input label="Reference number" value={reference} maxLength={100} onChange={e => setReference(e.target.value)} placeholder="UPI, bank or cheque reference (optional)" />
         <Textarea label="Notes" rows={2} value={notes} maxLength={500} onChange={e => setNotes(e.target.value)} placeholder="Optional" />
-        <p className="form-note">Applied to the oldest unpaid invoices first.{credit > 0 ? ' ' + money(credit) + ' will remain as customer credit for future invoices.' : ''}</p>
-        <div className="form-actions"><Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button><Button type="submit" busy={busy}>Save payment</Button></div>
+        <p className="form-note">Applied to the oldest unpaid invoices first. You can pay several bills together, up to their total remaining balance.</p>
+        <div className="form-actions"><Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button><Button type="submit" busy={busy} disabled={outstanding === 0 || exceedsBalance}>Save payment</Button></div>
       </form>}
   </Modal>;
 }

@@ -4,6 +4,7 @@ import { Badge, Button, EmptyState, ErrorNotice, LoadingState, Modal, PageHeader
 import type { Invoice } from '../../types';
 import { downloadCsv, formatDate, invoiceNumber } from '../../utils/formatters';
 import { useBusiness } from '../settings/businessSettings';
+import { UpiPaymentPanel } from '../payments/UpiPaymentPanel';
 
 export function InvoicesView({ invoices, onSelect }: { invoices: Invoice[]; onSelect: (invoice: Invoice) => void }) {
   const { settings, money, business } = useBusiness();
@@ -43,6 +44,7 @@ export function InvoiceModal({ invoice, loading, loadError, onClose, onPayment, 
         <table className="invoice-table"><caption className="sr-only">Invoice items</caption><thead><tr><th scope="col">Description</th><th scope="col" className="right">Qty</th><th scope="col" className="right">Rate</th><th scope="col" className="right">Amount</th></tr></thead><tbody>{invoice.items?.map((item, index) => <tr key={index}><td><span>{item.product_name}</span><small>per {item.unit}</small></td><td className="right numeric">{Number(item.quantity)}</td><td className="right numeric">{money(item.unit_price)}</td><td className="right numeric">{money(item.total)}</td></tr>)}</tbody></table>
         <dl className="invoice-totals"><div><dt>Subtotal</dt><dd>{money(invoice.subtotal)}</dd></div><div><dt>Tax{invoice.tax_rate ? ' (' + invoice.tax_rate + '%)' : ''}</dt><dd>{money(invoice.tax)}</dd></div><div className="invoice-grand-total"><dt>Total</dt><dd>{money(invoice.total)}</dd></div><div><dt>Paid</dt><dd>{money(invoice.allocated_amount)}</dd></div><div className="invoice-balance"><dt>Balance due</dt><dd>{money(invoice.remaining_amount)}</dd></div></dl>
         <div className="invoice-notes"><section><p className="invoice-label">Payment information</p><p>{Number(invoice.remaining_amount) > 0 ? 'Please include ' + invoiceNumber(invoice, settings.billing.invoicePrefix) + ' with your payment reference.' : 'This invoice is fully paid. Thank you.'}</p><p>Status: {invoice.status === 'Pending' ? 'Unpaid' : invoice.status}</p></section>{(invoice.billing_footer ?? settings.billing.footer) && <section><p className="invoice-label">Notes</p><p>{invoice.billing_footer ?? settings.billing.footer}</p></section>}</div>
+        {settings.modules.payments && settings.billing.paymentMethods.includes('upi') && !loadError && <UpiPaymentPanel amount={Number(invoice.remaining_amount)} reference={invoiceNumber(invoice, settings.billing.invoicePrefix)} customerName={invoice.customer_name} />}
       </article>
       <div className="invoice-dock no-print"><Badge variant={invoice.status === 'Paid' ? 'success' : 'warning'}>{invoice.status === 'Pending' ? 'Unpaid' : invoice.status}</Badge><Button variant="ghost" onClick={() => onStatement(invoice.customer_id)}>Statement</Button><Button variant="outline" disabled={!!loadError} onClick={() => window.print()}><Printer size={17} aria-hidden="true" />Print / Save PDF</Button>{settings.modules.payments && Number(invoice.remaining_amount) > 0 && <Button onClick={() => onPayment(invoice.customer_id)}>Record payment</Button>}</div>
     </div>}

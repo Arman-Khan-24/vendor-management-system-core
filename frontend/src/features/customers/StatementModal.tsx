@@ -4,9 +4,10 @@ import { ApiClient } from '../../api/client';
 import { Badge, Button, ErrorNotice, Input, LoadingState, Modal } from '../../components/ui';
 import { downloadCsv, errorMessage, formatDate } from '../../utils/formatters';
 import { useBusiness } from '../settings/businessSettings';
+import { UpiPaymentPanel } from '../payments/UpiPaymentPanel';
 
 export function StatementModal({ statementData, loading, loadError, onClose, onFilterChange }: { statementData: any; loading?: boolean; loadError?: string | null; onClose: () => void; onFilterChange: (startDate?: string, endDate?: string) => Promise<void> }) {
-  const { money, business } = useBusiness();
+  const { money, business, settings } = useBusiness();
   const [start, setStart] = useState(statementData?.period?.startDate || '');
   const [end, setEnd] = useState(statementData?.period?.endDate || '');
   const [busy, setBusy] = useState(false);
@@ -36,6 +37,7 @@ export function StatementModal({ statementData, loading, loadError, onClose, onF
           {!entries.length && <tr><td colSpan={4} className="muted">No transactions in this period.</td></tr>}
         </tbody></table></div>
         <p className="muted small">A negative closing balance means customer credit. Current outstanding: {money(statementData.currentOutstanding)}.</p>
+        {settings.modules.payments && settings.billing.paymentMethods.includes('upi') && <UpiPaymentPanel amount={Number(statementData.currentOutstanding)} reference="All unpaid invoices" customerName={statementData.customer.name} />}
         <div className="form-actions no-print"><Button variant="ghost" onClick={onClose}>Close</Button><Button variant="outline" onClick={() => downloadCsv(['Date', 'Reference', 'Billed', 'Received', 'Balance'], entries.map((e: any) => [e.date, e.reference_no, e.debit, e.credit, e.running_balance]), 'customer-statement.csv')}><Download size={16} aria-hidden="true" />CSV</Button><Button busy={downloading} onClick={download}><Printer size={17} aria-hidden="true" />Download PDF</Button></div>
       </>}
     </div>}

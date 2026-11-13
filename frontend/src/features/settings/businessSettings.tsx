@@ -7,7 +7,7 @@ export const defaultSettings: BusinessSettings = {
   branding: { appName: 'OrderLedger', tagline: 'A little more order, every day.', accent: 'sage', theme: 'light' },
   profile: { address: '', email: '', taxId: '' },
   catalog: { productLabel: 'Products', customerLabel: 'Customers', defaultUnit: 'piece', units: ['piece', 'kg', 'gram', 'litre', 'dozen', 'box', 'packet', 'bag'], categories: [] },
-  billing: { invoicePrefix: 'INV', defaultCreditTermsDays: 7, paymentMethods: ['cash', 'upi', 'bank_transfer', 'cheque'], taxRate: 0, footer: 'Thank you for your business.' },
+  billing: { invoicePrefix: 'INV', defaultCreditTermsDays: 7, paymentMethods: ['cash', 'upi', 'bank_transfer', 'cheque'], taxRate: 0, footer: 'Thank you for your business.', upiId: '', upiPayeeName: '' },
   modules: { reports: true, payments: true },
 };
 
