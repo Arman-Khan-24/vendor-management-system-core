@@ -1,3 +1,4 @@
+import { cachedRead } from '../services/cached-read.js';
 import { getAuthClientIp, verifyVercelClientIp } from '../middleware/vercel-client-ip.js';
 import { withTransaction } from '../database/connection.js';
 import jwt from 'jsonwebtoken';
@@ -32,9 +33,10 @@ router.use(['/login', '/register'], (req, res, next) => {
 });
 
 
+const listTemplates = cachedRead(() => BusinessRepository.listCategoryTemplates(), 30000);
 router.get('/templates', async (req, res, next) => {
   try {
-    const templates = await BusinessRepository.listCategoryTemplates();
+    const templates = await listTemplates();
     res.json({ templates });
   } catch (err) {
     next(err);

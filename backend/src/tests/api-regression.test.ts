@@ -374,7 +374,10 @@ test('all collections use stable limit/offset paging and validate report date ra
   assert.equal((await request('/api/reports/collections?startDate=2026-03-01&endDate=2026-02-28')).status, 400);
 });
 
-test('health reports pending migrations and becomes ready only when all are recorded', async () => {
+test('health reports pending migrations and becomes ready only when all are recorded', async t => {
+  const realNow = Date.now.bind(Date);
+  let offset = 0;
+  t.mock.method(Date, 'now', () => realNow() + offset);
   const healthy = await request('/health', undefined, 'GET', '');
   assert.equal(healthy.status, 200);
   assert.equal(healthy.data.apiVersion, 2);
@@ -384,10 +387,12 @@ test('health reports pending migrations and becomes ready only when all are reco
   assert.equal(healthy.data.buildCommit, process.env.RENDER_GIT_COMMIT || null);
   await pool.query("DELETE FROM _migrations WHERE filename = '005_ledger_snapshots.sql'");
   try {
+    offset += 3100;
     assert.equal((await request('/health', undefined, 'GET', '')).status, 503);
   } finally {
     await pool.query("INSERT INTO _migrations (filename) VALUES ('005_ledger_snapshots.sql')");
   }
+  offset += 1100;
   assert.equal((await request('/health', undefined, 'GET', '')).status, 200);
 });
 

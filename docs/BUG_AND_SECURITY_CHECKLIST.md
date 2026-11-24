@@ -18,8 +18,12 @@ Source baseline is local main at `7e35110`. Checked items have a local code chan
 ## P0 — Security and abuse controls
 
 - [x] Add in-process limits for login, signup, text/photo import, and AI connection tests.
+- [x] Perform bcrypt comparison for both known and unknown login emails. Return generic signup conflict text.
+- [ ] Remove the remaining signup enumeration signal with email verification and matching public responses.
+- [x] Cache public health readiness for three seconds and signup templates for 30 seconds, sharing concurrent database reads.
 - [x] Scope the login account counter to the client IP and normalized email. Keep the separate per-IP limit.
-- [ ] Add a trusted way to identify individual client IPs through Vercel and Render. Express currently keys requests by the immediate peer IP. Use shared counters if the deployment uses multiple instances.
+- [x] Verified Vercel production login and signup use an authenticated client IP for rate limiting on build `b51e11e`. Direct API and unverified proxy requests use the immediate peer IP.
+- [ ] Use shared rate-limit counters if the deployment moves to multiple instances.
 - [x] Add database-backed limits of 30 shared requests per business and 300 globally per UTC day. Manual imports, provider tests and WhatsApp all reserve from the same budget. A configured `SHARED_AI_BUSINESS_IDS` allowlist gates access.
 - [ ] Configure the production allowlist and decide whether to add a separate in-flight concurrency limit.
 - [x] Require certificate and hostname verification for remote PostgreSQL. Trust the published Supabase CA for its pooler and support `DATABASE_CA_CERT` for other private CAs.
@@ -46,7 +50,7 @@ Source baseline is local main at `7e35110`. Checked items have a local code chan
 - [ ] Verify tenant and role isolation across customers, products, orders, invoices, payments, reports, settings, and WhatsApp.
 - [ ] Verify financial invariants in staging. Cover concurrent orders, invoice generation, payment caps, retries, and rollback. Use disposable tenants and synthetic payments.
 - [x] Verified live Gemini text and photo imports and the server-default reset in a QA workspace. Both imports returned one item at quantity two.
-- [ ] Verify live Groq and automatic fallback when a valid Groq credential is available.
+- [x] Verified live Groq text, photo and automatic fallback on build `b51e11e`. Removed the temporary credential and archived the QA product after testing.
 - [ ] Verify signed WhatsApp webhooks, retry behavior, and one controlled staging reply.
 - [ ] Verify startup recovery, mobile and desktop flows, and matching frontend/backend release versions.
 - [x] Upgrade flagged dependencies in both lockfiles. npm audit reported zero findings after the updates.

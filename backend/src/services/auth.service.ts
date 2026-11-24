@@ -10,6 +10,8 @@ import { AuthUserPayload } from '../middleware/auth.middleware.js';
 import { UserRole } from '../models/types.js';
 import { withTransaction } from '../database/connection.js';
 
+const dummyPasswordHash = '$2b$10$q6gteW/ElemWJXsYYGRfI.B4ep/UnqE8xuuLP.2kZ7BUkOin6ialO';
+
 export class AuthService {
   static async registerOwnerAndBusiness(data: {
     businessName: string;
@@ -23,7 +25,7 @@ export class AuthService {
     // Check if business slug exists
     const existingBusiness = await BusinessRepository.findBySlug(data.businessSlug);
     if (existingBusiness) {
-      throw new AppError('Business identifier/slug already taken. Please choose another.', 409);
+      throw new AppError('Could not create this workspace. Check your signup details or sign in.', 409);
     }
 
     const email = data.email.toLowerCase().trim();
@@ -33,7 +35,7 @@ export class AuthService {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [email]);
       const existingUser = await UserRepository.findByEmail(email, client);
       if (existingUser) {
-        throw new AppError('User with this email already exists', 409);
+        throw new AppError('Could not create this workspace. Check your signup details or sign in.', 409);
       }
 
       // Create Business
@@ -81,12 +83,8 @@ export class AuthService {
 
   static async login(data: { email: string; password: string }) {
     const user = await UserRepository.findByEmail(data.email.toLowerCase().trim());
-    if (!user) {
-      throw new AppError('Invalid email or password', 401);
-    }
-
-    const isValid = await bcrypt.compare(data.password, user.password_hash);
-    if (!isValid) {
+    const isValid = await bcrypt.compare(data.password, user?.password_hash ?? dummyPasswordHash);
+    if (!user || !isValid) {
       throw new AppError('Invalid email or password', 401);
     }
 

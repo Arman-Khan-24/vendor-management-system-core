@@ -1,3 +1,4 @@
+import { cachedRead } from './services/cached-read.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -42,10 +43,11 @@ export function createApp(localDemo?: express.Router) {
   } }));
   app.use(express.urlencoded({ limit: '1mb', extended: true }));
 
+  const readiness = cachedRead(checkDatabaseReadiness, 3000);
   // Health check endpoint
   app.get('/health', async (req, res) => {
     try {
-      await checkDatabaseReadiness();
+      await readiness();
       res.json({ status: 'ok', service: 'OrderLedger Core API', apiVersion: 2, capabilities: { idempotentWrites: true, businessSettings: true, whatsappOrdering: true, orderImport: true }, buildCommit: process.env.RENDER_GIT_COMMIT || null, timestamp: new Date().toISOString() });
     } catch {
       res.status(503).json({ status: 'unavailable', service: 'OrderLedger Core API', error: 'Database connection or migrations are not ready.' });
