@@ -130,8 +130,9 @@ test('expired inbound leases recover, per-phone jobs stay ordered, and expired o
 });
 test('callbacks arriving before send persistence are retained and never downgraded by late sent receipts',async()=>{
   await ingest();await step();const job=await repo.claim();assert.ok(job);const providerId='wamid.receipt.synthetic';
-  globalThis.fetch=async()=>{await repo.recordInbound(connection,[],[{id:providerId,status:'read'}]);return Response.json({messages:[{id:providerId}]});};
-  await engine.processJob(job);await repo.recordInbound(connection,[],[{id:providerId,status:'sent'}]);
+  let callback: Promise<void> | undefined;
+  globalThis.fetch=async()=>{callback=repo.recordInbound(connection,[],[{id:providerId,status:'read'}]);return Response.json({messages:[{id:providerId}]});};
+  await engine.processJob(job);await callback;await repo.recordInbound(connection,[],[{id:providerId,status:'sent'}]);
   assert.equal((await pool.query('SELECT delivery_status FROM whatsapp_messages WHERE id=$1',[job.message_id])).rows[0].delivery_status,'read');
 });
 test('a database failure after Meta accepts a reply becomes uncertain delivery and is never retried automatically',async()=>{
@@ -176,4 +177,31 @@ test('localhost submission uses the same quote/confirmation ledger flow while re
   assert.equal(sends,0);assert.equal((await orders()).length,0);
   await local.enqueue(customerId,'YES');const confirmation=await repo.claim();assert.ok(confirmation);await engine.processJob(confirmation,local.transport);
   assert.equal((await orders()).length,1);assert.equal(Number((await pool.query('SELECT quantity FROM order_items')).rows[0].quantity),0.5);
+});
+
+test('expired outbound lease cannot call the transport', async () => {
+  await ingest(); await step();
+  const job = await repo.claim(); assert.ok(job);
+  await pool.query("UPDATE whatsapp_jobs SET lease_until=NOW()-INTERVAL '1 minute' WHERE id=$1", [job.id]);
+  await assert.rejects(engine.processJob(job));
+  assert.equal(sends, 0);
+});
+
+test('owner review preserves the selected product UUID', async () => {
+  extracted.warnings = ['Review required'];
+  await ingest(); const job = await step(); await step();
+  const selected = (await pool.query("INSERT INTO products(business_id,name,unit,current_price) VALUES($1,'Tomatoes','kg',60) RETURNING id", [connection.businessId])).rows[0].id;
+  await engine.review(connection.businessId, job.message_id, [{ productId: selected, quantity: 1 }]);
+  const pending = (await pool.query("SELECT extracted_items FROM pending_order_confirmations WHERE status='pending_confirmation'")).rows[0];
+  assert.equal(pending.extracted_items[0].productId, selected);
+  assert.equal(pending.extracted_items[0].unitPrice, 60);
+});
+
+test('quote tax uses PostgreSQL decimal rounding', async () => {
+  await pool.query('UPDATE products SET current_price=25 WHERE id=$1', [productId]);
+  await pool.query('UPDATE businesses SET settings=$2 WHERE id=$1', [connection.businessId, JSON.stringify({ billing: { taxRate: 1.14 } })]);
+  extracted.items = [{ product: 'Tomato', quantity: 1, unit: 'kg' }];
+  await draft();
+  const summary = (await pool.query("SELECT message_text FROM whatsapp_messages WHERE direction='outbound' ORDER BY created_at DESC LIMIT 1")).rows[0].message_text;
+  assert.match(summary, /25\.29/);
 });

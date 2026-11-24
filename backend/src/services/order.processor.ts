@@ -13,11 +13,11 @@ import { AppError } from '../middleware/errorHandler.js';
 export const confirmationPattern = /^(yes|confirm|ok|haan|ha|हाँ|हां|ठीक है)[.!]?$/i;
 const rejectPattern = /^(no|cancel|reject|नहीं|nahi)[.!]?$/i;
 
-function confirmationText(items: MatchedOrderItem[], taxRate: number, currency: string) {
-  const subtotalCents = items.reduce((sum,item) => sum + Math.round(item.totalPrice * 100), 0);
-  const taxCents = Math.round(subtotalCents * taxRate / 100);
-  if (subtotalCents+taxCents>999999999999) throw new AppError('The order exceeds the supported financial amount.',400);
-  const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency }).format((subtotalCents + taxCents) / 100);
+function confirmationText(items: MatchedOrderItem[], taxRate: number, currency: string, ledgerTotal: number) {
+  if (!Number.isFinite(ledgerTotal) || ledgerTotal > 9999999999.99) {
+    throw new AppError('The order exceeds the supported financial amount.', 400);
+  }
+  const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency }).format(ledgerTotal);
   return `Please check your order:\n${items.map(item => `${item.productName} — ${item.quantity} ${item.unit}`).join('\n')}\nTotal: ${money}${taxRate ? ` (includes ${taxRate}% tax)` : ''}\nReply YES to confirm, NO to discard, or send a correction. This quote expires in 30 minutes.`;
 }
 
@@ -32,13 +32,16 @@ async function lockedJob(client: PoolClient, job: WhatsAppJob) {
   const enabled = await client.query('SELECT enabled,phone_number_id,waba_id FROM whatsapp_connections WHERE business_id=$1', [job.business_id]);
   if (!enabled.rows[0]?.enabled) throw new ProviderError('WHATSAPP_DISABLED', false);
   if (enabled.rows[0].phone_number_id!==job.payload.phoneNumberId || enabled.rows[0].waba_id!==job.payload.wabaId) throw new ProviderError('WHATSAPP_CONNECTION_CHANGED',false);
-  const result = await client.query("SELECT id FROM whatsapp_jobs WHERE id=$1 AND status='processing' AND lease_token=$2 FOR UPDATE", [job.id,job.lease_token]);
+  const result = await client.query("SELECT id FROM whatsapp_jobs WHERE id=$1 AND status='processing' AND lease_token=$2 AND lease_until>NOW() FOR UPDATE", [job.id,job.lease_token]);
   if (!result.rows[0]) throw new AppError('Message lease changed.', 409);
 }
 async function savePending(client: PoolClient, businessId: string, customerId: string, phone: string, messageId: string, items: MatchedOrderItem[], rawText: string, sourceType: string, provider: string, model: string) {
   const business = (await client.query('SELECT currency,settings FROM businesses WHERE id=$1', [businessId])).rows[0];
   const taxRate = normalizeBusinessSettings(business.settings).billing.taxRate;
-  const text = confirmationText(items, taxRate, business.currency);
+  const totals = await client.query(`SELECT (sum(round((item->>'quantity')::numeric * (item->>'unitPrice')::numeric,2))
+    + round(sum(round((item->>'quantity')::numeric * (item->>'unitPrice')::numeric,2)) * $2::numeric / 100,2))::float8 AS total
+    FROM jsonb_array_elements($1::jsonb) item`, [JSON.stringify(items), taxRate]);
+  const text = confirmationText(items, taxRate, business.currency, totals.rows[0].total);
   if (text.length > 4096) throw new AppError('This order is too long for a confirmation. Split it into smaller orders.', 400);
   await client.query("UPDATE pending_order_confirmations SET status='expired' WHERE business_id=$1 AND customer_id=$2 AND status='pending_confirmation'", [businessId,customerId]);
   const result = await client.query(`INSERT INTO pending_order_confirmations(business_id,customer_id,inbound_message_id,extracted_items,raw_text,ai_provider,ai_model,source_type,quote_context)
@@ -60,10 +63,10 @@ export class OrderProcessingEngine {
       }
       const lastInbound = (await query(`SELECT MAX(provider_timestamp) AS last FROM whatsapp_messages WHERE business_id=$1 AND sender_phone=$2 AND direction='inbound'`, [job.business_id,job.sender_phone])).rows[0].last;
       if (!lastInbound || Date.now() - new Date(lastInbound).getTime() >= 24*60*60*1000) throw new ProviderError('CUSTOMER_SERVICE_WINDOW_CLOSED', false);
-      const sent = await provider.sendTextMessage(job.sender_phone, job.payload.text);
       try { await withTransaction(async client => {
         await lockedJob(client,job);
-        await client.query("UPDATE whatsapp_messages SET provider_message_id=$2,delivery_status=CASE WHEN delivery_status IN ('read','delivered','failed') THEN delivery_status ELSE 'sent' END WHERE id=$1", [job.message_id,sent.messageId]);
+        const sent = await provider.sendTextMessage(job.sender_phone, job.payload.text);
+        await client.query("UPDATE whatsapp_messages SET provider_message_id=$2,sent_at=clock_timestamp(),delivery_status=CASE WHEN delivery_status IN ('read','delivered','failed') THEN delivery_status ELSE 'sent' END WHERE id=$1", [job.message_id,sent.messageId]);
         await client.query(`UPDATE whatsapp_messages m SET delivery_status=r.delivery_status,error_code=r.error_code FROM whatsapp_delivery_receipts r
           WHERE m.id=$1 AND r.business_id=m.business_id AND r.provider_message_id=m.provider_message_id`,[job.message_id]);
         await WhatsAppRepository.complete(client,job);
@@ -141,7 +144,8 @@ export class OrderProcessingEngine {
         const incomingTime = new Date(job.payload.providerTimestamp).getTime();
         const unsent = await client.query(`SELECT j.id FROM whatsapp_jobs j JOIN whatsapp_messages m ON m.id=j.message_id
           WHERE j.business_id=$1 AND j.kind='outbound' AND j.payload->>'confirmationId'=$2
-          AND (j.status!='completed' OR m.delivery_status NOT IN ('sent','delivered','read'))`, [job.business_id,pending.id]);
+          AND (j.status!='completed' OR m.delivery_status NOT IN ('sent','delivered','read')
+            OR m.sent_at IS NULL OR date_trunc('second',m.sent_at)>=$3::timestamptz)`, [job.business_id,pending.id,job.payload.providerTimestamp]);
         const catalog = (await client.query('SELECT id,name,unit,current_price FROM products WHERE business_id=$1 AND active FOR SHARE', [job.business_id])).rows;
         const business = (await client.query('SELECT currency,settings FROM businesses WHERE id=$1', [job.business_id])).rows[0];
         const items: MatchedOrderItem[] = pending.extracted_items;
@@ -177,10 +181,19 @@ export class OrderProcessingEngine {
       const confirmed = await client.query("SELECT id FROM pending_order_confirmations WHERE inbound_message_id=$1 AND status='confirmed'", [messageId]);
       if (confirmed.rows.length) throw new AppError('This message already created an order.',409);
       const products = (await client.query('SELECT id,name,unit,current_price FROM products WHERE business_id=$1 AND active FOR SHARE', [businessId])).rows;
-      const requested = items.map(item => { const product = products.find(row => row.id===item.productId); if (!product) throw new AppError('Choose active products from this business.',400); return { product: product.name,quantity: item.quantity,unit: product.unit }; });
-      const match = CatalogMatcher.match(requested,products.map(row => ({ ...row,current_price: Number(row.current_price) })));
-      if (!match.isValid) throw new AppError('Check the reviewed quantities and products.',400);
-      await savePending(client,businessId,message.customer_id,message.sender_phone,messageId,match.matchedItems,message.message_text || '',message.message_type==='image' ? 'whatsapp_image' : 'whatsapp_text','human','owner-review');
+      const combined = new Map<string, number>();
+      for (const item of items) combined.set(item.productId, (combined.get(item.productId) || 0) + item.quantity);
+      const reviewed: MatchedOrderItem[] = [];
+      for (const [productId, quantity] of combined) {
+        const product = products.find(row => row.id === productId);
+        if (!product || !Number.isFinite(quantity) || quantity <= 0 || quantity > 99999999.99) {
+          throw new AppError('Choose active products and valid quantities.', 400);
+        }
+        const total = await client.query('SELECT round($1::numeric * $2::numeric, 2)::float8 AS total', [quantity, product.current_price]);
+        reviewed.push({ productId, productName: product.name, quantity, unit: product.unit,
+          unitPrice: Number(product.current_price), totalPrice: total.rows[0].total });
+      }
+      await savePending(client,businessId,message.customer_id,message.sender_phone,messageId,reviewed,message.message_text || '',message.message_type==='image' ? 'whatsapp_image' : 'whatsapp_text','human','owner-review');
       await client.query('UPDATE whatsapp_messages SET needs_review=false WHERE id=$1',[messageId]);
     });
   }

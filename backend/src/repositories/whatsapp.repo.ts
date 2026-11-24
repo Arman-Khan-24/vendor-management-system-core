@@ -57,6 +57,7 @@ export class WhatsAppRepository {
   }
   static async recordInbound(connection: WhatsAppRuntimeConnection, messages: WhatsAppInboundMessage[], statuses: any[]) {
     await withTransaction(async client => {
+      await client.query('SELECT id FROM businesses WHERE id=$1 FOR UPDATE', [connection.businessId]);
       for (const message of messages) {
         const result = await client.query(`INSERT INTO whatsapp_messages
           (business_id,provider,provider_message_id,sender_phone,direction,message_type,message_text,status,provider_timestamp,media_mime_type)
@@ -94,15 +95,20 @@ export class WhatsAppRepository {
   }
   static async claim(): Promise<WhatsAppJob | null> {
     return withTransaction(async client => {
+      const tenants = await client.query(`SELECT b.id FROM businesses b WHERE EXISTS
+        (SELECT 1 FROM whatsapp_jobs j WHERE j.business_id=b.id AND ((j.status='queued' AND j.available_at<=NOW()) OR (j.status='processing' AND j.lease_until<NOW())))
+        ORDER BY b.id FOR UPDATE SKIP LOCKED LIMIT 1`);
+      if (!tenants.rows[0]) return null;
+      const businessId = tenants.rows[0].id;
       // A crashed outbound request has unknown delivery; require manual review rather than resending blindly.
       await client.query(`WITH expired AS (UPDATE whatsapp_jobs SET status='failed',error_code='DELIVERY_UNCONFIRMED'
-        WHERE kind='outbound' AND status='processing' AND lease_until < NOW() RETURNING message_id)
-        UPDATE whatsapp_messages SET status='failed',error_code='DELIVERY_UNCONFIRMED' WHERE id IN (SELECT message_id FROM expired)`);
+        WHERE business_id=$1 AND kind='outbound' AND status='processing' AND lease_until < NOW() RETURNING message_id)
+        UPDATE whatsapp_messages SET status='failed',error_code='DELIVERY_UNCONFIRMED' WHERE id IN (SELECT message_id FROM expired)`, [businessId]);
       const result = await client.query(`SELECT j.* FROM whatsapp_jobs j JOIN whatsapp_connections c ON c.business_id=j.business_id AND c.enabled
-        WHERE ((j.status='queued' AND j.available_at<=NOW()) OR (j.kind='inbound' AND j.status='processing' AND j.lease_until<NOW()))
+        WHERE j.business_id=$1 AND ((j.status='queued' AND j.available_at<=NOW()) OR (j.kind='inbound' AND j.status='processing' AND j.lease_until<NOW()))
         AND NOT EXISTS(SELECT 1 FROM whatsapp_jobs earlier WHERE earlier.business_id=j.business_id AND earlier.sender_phone=j.sender_phone
           AND earlier.status IN ('queued','processing') AND earlier.sequence<j.sequence)
-        ORDER BY j.sequence FOR UPDATE OF j SKIP LOCKED LIMIT 1`);
+        ORDER BY j.sequence FOR UPDATE OF j SKIP LOCKED LIMIT 1`, [businessId]);
       const job = result.rows[0];
       if (!job) return null;
       const token = randomUUID();
@@ -126,7 +132,10 @@ export class WhatsAppRepository {
       if (result.rows[0] && !retry && job.kind==='inbound') {
         await client.query(`UPDATE pending_order_confirmations SET status='expired' WHERE business_id=$1 AND status='pending_confirmation'
           AND customer_id=(SELECT customer_id FROM whatsapp_messages WHERE id=$2)
-          AND created_at<=(SELECT created_at FROM whatsapp_messages WHERE id=$2)`, [job.business_id,job.message_id]);
+          AND inbound_message_id IN (SELECT original.id FROM whatsapp_messages original
+            JOIN whatsapp_messages failed ON failed.id=$2
+            WHERE original.business_id=$1 AND original.sender_phone=failed.sender_phone
+              AND original.provider_timestamp<=failed.provider_timestamp)`, [job.business_id,job.message_id]);
       }
     });
   }
