@@ -91,8 +91,9 @@ export function normalizeBusinessConnections(rows: readonly ConnectionSummaryRow
 }
 
 function providerEncryptionKey(version: string, legacySecret?: string): Buffer {
-  const secret = version === 'v2' ? process.env.PROVIDER_ENCRYPTION_KEY : legacySecret || config.jwtSecret;
-  if (!secret || (version === 'v2' && !/^[0-9a-f]{64}$/i.test(secret))) throw new Error('Invalid provider encryption key configuration.');
+  const secret = version === 'v3' ? process.env.AI_PROVIDER_ENCRYPTION_KEY
+    : version === 'v2' ? process.env.PROVIDER_ENCRYPTION_KEY : legacySecret || config.jwtSecret;
+  if (!secret || (version !== 'v1' && !/^[0-9a-f]{64}$/i.test(secret))) throw new Error('Invalid provider encryption key configuration.');
   return createHash('sha256').update('orderledger:provider-connections:' + version + '\0').update(secret).digest();
 }
 export function encryptConnectionKey(apiKey: string, businessId: string, slot: ConnectionSlot): string | null {
@@ -101,7 +102,8 @@ export function encryptConnectionKey(apiKey: string, businessId: string, slot: C
 
 export function encryptSecret(apiKey: string, businessId: string, purpose: string): string | null {
   if (!apiKey) return null;
-  const version = process.env.PROVIDER_ENCRYPTION_KEY ? 'v2' : 'v1';
+  const version = (purpose === 'primary' || purpose === 'fallback') && process.env.AI_PROVIDER_ENCRYPTION_KEY
+    ? 'v3' : process.env.PROVIDER_ENCRYPTION_KEY ? 'v2' : 'v1';
   const key = providerEncryptionKey(version);
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -114,7 +116,7 @@ export function decryptSecret(value: string | null, businessId: string, purpose:
   if (!value) return '';
   try {
     const [version, iv, tag, ciphertext, extra] = value.split('.');
-    if (!['v1', 'v2'].includes(version) || extra !== undefined || !iv || !tag || !ciphertext) throw new Error();
+    if (!['v1', 'v2', 'v3'].includes(version) || extra !== undefined || !iv || !tag || !ciphertext) throw new Error();
     const key = providerEncryptionKey(version, process.env.LEGACY_PROVIDER_JWT_SECRET);
     const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'));
     decipher.setAAD(Buffer.from(`${businessId}:${purpose}`));

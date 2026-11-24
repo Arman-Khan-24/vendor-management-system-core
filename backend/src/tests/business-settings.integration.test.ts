@@ -249,3 +249,24 @@ test('customer search preserves quoted names as literal data and stays tenant sc
   assert.equal(results.data.length, 1);
   assert.equal(results.data[0].name, name);
 });
+
+test('AI credential migration preserves saved keys and is idempotent', async t => {
+  const owner = await registerTenant('ai-credential-migration');
+  const saved = await request(owner.token, '/api/business/connections', {
+    primary: { model: 'gemini-2.5-flash', apiKey: 'synthetic-ai-key' },
+  });
+  assert.equal(saved.status, 200);
+  const originalKey = process.env.AI_PROVIDER_ENCRYPTION_KEY;
+  process.env.AI_PROVIDER_ENCRYPTION_KEY = '1'.repeat(64);
+  t.after(() => {
+    if (originalKey === undefined) delete process.env.AI_PROVIDER_ENCRYPTION_KEY;
+    else process.env.AI_PROVIDER_ENCRYPTION_KEY = originalKey;
+  });
+  const { migrateAiCredentials } = await import('../database/migrate-ai-credentials.js');
+  const { decryptSecret } = await import('../services/business-settings.service.js');
+  assert.equal(await migrateAiCredentials(), 1);
+  assert.equal(await migrateAiCredentials(), 0);
+  const stored = await pool.query('SELECT api_key_encrypted FROM business_connections WHERE business_id = $1', [owner.business.id]);
+  assert.match(stored.rows[0].api_key_encrypted, /^v3\./);
+  assert.equal(decryptSecret(stored.rows[0].api_key_encrypted, owner.business.id, 'primary'), 'synthetic-ai-key');
+});

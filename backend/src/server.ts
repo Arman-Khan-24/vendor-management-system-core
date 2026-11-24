@@ -2,6 +2,7 @@ import { createApp } from './app.js';
 import { config } from './config/env.js';
 import { runMigrations } from './database/migrator.js';
 import { startWhatsAppWorker } from './services/whatsapp/whatsapp.worker.js';
+import { migrateAiCredentials } from './database/migrate-ai-credentials.js';
 import { pool } from './database/connection.js';
 
 async function bootstrap() {
@@ -11,6 +12,10 @@ async function bootstrap() {
     }
     // Do not accept saves until the complete schema is ready.
     await runMigrations();
+    if (process.env.AI_PROVIDER_ENCRYPTION_KEY) {
+      const count = await migrateAiCredentials();
+      console.info('AI credential migration complete', { migrated: count });
+    }
 
     const app = createApp();
     const server = app.listen(config.port, '0.0.0.0', () => {

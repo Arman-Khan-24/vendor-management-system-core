@@ -23,12 +23,13 @@ Source baseline is local main at `7e35110`. Checked items have a local code chan
 - [x] Add database-backed limits of 30 shared requests per business and 300 globally per UTC day. Manual imports, provider tests and WhatsApp all reserve from the same budget. A configured `SHARED_AI_BUSINESS_IDS` allowlist gates access.
 - [ ] Configure the production allowlist and decide whether to add a separate in-flight concurrency limit.
 - [x] Require certificate and hostname verification for remote PostgreSQL. Trust the published Supabase CA for its pooler and support `DATABASE_CA_CERT` for other private CAs.
-- [ ] Check the production database certificate chain before rollout. Verify readiness over TLS after release.
+- [x] Verified the Supabase pooler certificate and hostname against the published CA and confirmed production database readiness on Render build `607729c`.
 - [x] Support a separate `PROVIDER_ENCRYPTION_KEY` for new AI and WhatsApp secrets, with legacy decryption during migration.
 - [x] Add a transactional migration command for existing AI and WhatsApp credentials. Run `node dist/database/rotate-provider-credentials.js` from the built backend with the configured keys and database connection.
 - [ ] Configure the separate key in production, run the migration, verify affected credentials, and retire the legacy key.
 - [x] Replace reflected CORS with configured browser origins. Set the production frontend origin in the Render blueprint.
-- [ ] Verify allowed production and local origins and confirm foreign origins receive no CORS authorization headers.
+- [x] Verified production CORS allows the Vercel frontend and emits no authorization header for a foreign origin.
+- [ ] Verify any additional self-hosted development origins used by the team.
 - [x] Limit new registration passwords to 72 UTF-8 bytes.
 - [x] Apply the same policy to every future team-member and password-change entry point or migrate password hashing. Preserve existing login compatibility.
 - [x] Use an HttpOnly, Secure, SameSite cookie on the default production frontend with origin checks on writes. Retain bearer sessions for development and explicitly configured servers. Default to two-hour sessions and recheck membership and permissions on each authenticated request. Revoke issued sessions server-side on logout.
