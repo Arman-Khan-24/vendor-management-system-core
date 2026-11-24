@@ -22,7 +22,7 @@ Source baseline is local main at `7e35110`. Checked items have a local code chan
 - [ ] Confirm client IP handling through Render and Vercel. Use shared rate-limit counters where multiple instances or restarts would bypass local counters.
 - [x] Add database-backed limits of 30 shared requests per business and 300 globally per UTC day. Manual imports, provider tests and WhatsApp all reserve from the same budget. A configured `SHARED_AI_BUSINESS_IDS` allowlist gates access.
 - [ ] Configure the production allowlist and decide whether to add a separate in-flight concurrency limit.
-- [ ] Enable verified TLS for production PostgreSQL after obtaining the provider CA. Render rejected the current database certificate chain.
+- [x] Require certificate and hostname verification for remote PostgreSQL. Trust the published Supabase CA for its pooler and support `DATABASE_CA_CERT` for other private CAs.
 - [ ] Check the production database certificate chain before rollout. Verify readiness over TLS after release.
 - [x] Support a separate `PROVIDER_ENCRYPTION_KEY` for new AI and WhatsApp secrets, with legacy decryption during migration.
 - [x] Add a transactional migration command for existing AI and WhatsApp credentials. Run `node dist/database/rotate-provider-credentials.js` from the built backend with the configured keys and database connection.

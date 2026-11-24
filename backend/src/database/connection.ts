@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { config } from '../config/env.js';
 
@@ -7,11 +8,19 @@ const { Pool } = pg;
  * Standard PostgreSQL connection pool.
  * OrderLedger strictly uses PostgreSQL as its sole database.
  */
-const isLocal = config.databaseUrl.includes('localhost') || config.databaseUrl.includes('127.0.0.1');
+const databaseUrl = new URL(config.databaseUrl);
+const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(databaseUrl.hostname);
+const isSupabasePooler = databaseUrl.hostname.endsWith('.pooler.supabase.com');
+const ca = process.env.DATABASE_CA_CERT || (isSupabasePooler
+  // Published Supabase trust anchor for hosted PostgreSQL.
+  ? readFileSync(new URL('../assets/supabase-prod-ca-2021.crt', import.meta.url), 'utf8')
+  : undefined);
+// pg lets URL SSL parameters replace the explicit verified TLS options.
+for (const name of ['ssl', 'sslmode', 'sslcert', 'sslkey', 'sslrootcert']) databaseUrl.searchParams.delete(name);
 
 export const pool = new Pool({
-  connectionString: config.databaseUrl,
-  ssl: isLocal ? false : { rejectUnauthorized: false },
+  connectionString: databaseUrl.toString(),
+  ssl: isLocal ? false : { rejectUnauthorized: true, ca },
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,

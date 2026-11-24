@@ -11,9 +11,6 @@ async function bootstrap() {
     }
     // Do not accept saves until the complete schema is ready.
     await runMigrations();
-    if (process.env.RENDER === 'true') {
-      console.info('PostgreSQL provider hostname', new URL(config.databaseUrl).hostname);
-    }
 
     const app = createApp();
     const server = app.listen(config.port, '0.0.0.0', () => {
