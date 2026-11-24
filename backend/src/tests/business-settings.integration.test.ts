@@ -216,7 +216,9 @@ test('browser sessions use guarded HttpOnly cookies and revoke on logout', async
   assert.equal(rejected.status, 403);
   const registered = await fetch(base + '/api/auth/register', { method: 'POST', headers: browserHeaders, body });
   assert.equal(registered.status, 201);
-  assert.equal('token' in await registered.json(), false);
+  const registrationBody = await registered.json();
+  assert.ok(registrationBody && typeof registrationBody === 'object');
+  assert.equal('token' in registrationBody, false);
   const setCookie = registered.headers.get('set-cookie')!;
   assert.match(setCookie, /^__Host-orderledger_session=/);
   for (const attribute of ['HttpOnly', 'Secure', 'SameSite=Lax', 'Path=/']) assert.ok(setCookie.includes(attribute));
