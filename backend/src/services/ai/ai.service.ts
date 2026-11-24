@@ -45,10 +45,11 @@ function parseOutput(raw: unknown, model: string): ProviderResult {
 
 export class GeminiExtractionProvider implements IOrderExtractionProvider {
   readonly name = 'gemini';
-  constructor(private apiKey: string, public readonly model = 'gemini-2.5-flash', private endpoint = 'https://generativelanguage.googleapis.com/v1beta') {}
+  constructor(private apiKey: string, public readonly model = 'gemini-2.5-flash', private endpoint = 'https://generativelanguage.googleapis.com/v1beta', private beforeRequest?: () => Promise<void>) {}
   private async call(parts: unknown[], catalog: CatalogItemContext[], previous?: ExtractedOrderItem[]) {
     if (!this.apiKey || !this.model || ['mock','test'].includes(this.apiKey)) throw new ProviderError('AI_NOT_CONFIGURED', false);
     if (this.endpoint.replace(/\/$/, '') !== 'https://generativelanguage.googleapis.com/v1beta') throw new ProviderError('UNSUPPORTED_AI_ENDPOINT', false);
+    await this.beforeRequest?.();
     const data = await fetchProviderJson(`${this.endpoint.replace(/\/$/,'')}/models/${encodeURIComponent(this.model)}:generateContent`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt(catalog, previous) }, ...parts] }],
@@ -67,10 +68,11 @@ export class GeminiExtractionProvider implements IOrderExtractionProvider {
 
 export class GroqExtractionProvider implements IOrderExtractionProvider {
   readonly name = 'groq';
-  constructor(private apiKey: string, public readonly model = 'llama-3.3-70b-versatile', private visionModel = model, private endpoint = 'https://api.groq.com/openai/v1') {}
+  constructor(private apiKey: string, public readonly model = 'llama-3.3-70b-versatile', private visionModel = model, private endpoint = 'https://api.groq.com/openai/v1', private beforeRequest?: () => Promise<void>) {}
   private async call(content: unknown, catalog: CatalogItemContext[], model: string, previous?: ExtractedOrderItem[]) {
     if (!this.apiKey || !model || ['mock','test'].includes(this.apiKey)) throw new ProviderError('AI_NOT_CONFIGURED', false);
     if (this.endpoint.replace(/\/$/,'') !== 'https://api.groq.com/openai/v1') throw new ProviderError('UNSUPPORTED_AI_ENDPOINT', false);
+    await this.beforeRequest?.();
     const data = await fetchProviderJson(`${this.endpoint.replace(/\/$/,'')}/chat/completions`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
       body: JSON.stringify({ model, messages: [{ role: 'system', content: prompt(catalog, previous) }, { role: 'user', content }],
@@ -86,13 +88,21 @@ export class GroqExtractionProvider implements IOrderExtractionProvider {
 }
 
 export class AiOrderExtractionService {
-  constructor(private primary: IOrderExtractionProvider, private fallback?: IOrderExtractionProvider) {}
+  constructor(private primary: IOrderExtractionProvider, private fallback?: IOrderExtractionProvider | (() => IOrderExtractionProvider | undefined)) {}
   get primaryMetadata() { return { provider: this.primary.name, model: this.primary.model || 'injected' }; }
   private async run(call: (provider: IOrderExtractionProvider) => Promise<ProviderResult>): Promise<ExtractionResult> {
     try { return { ...await call(this.primary), provider: this.primary.name, wasFallback: false }; }
     catch (error) {
-      if (!this.fallback) throw error;
-      return { ...await call(this.fallback), provider: this.fallback.name, wasFallback: true };
+      if (!(error instanceof ProviderError)) throw error;
+      let fallback: IOrderExtractionProvider | undefined;
+      try { fallback = typeof this.fallback === 'function' ? this.fallback() : this.fallback; }
+      catch { throw new ProviderError(error.code, error.retryable, 'FALLBACK_CONFIGURATION_ERROR'); }
+      if (!fallback) throw error;
+      try { return { ...await call(fallback), provider: fallback.name, wasFallback: true }; }
+      catch (fallbackError) {
+        if (!(fallbackError instanceof ProviderError)) throw fallbackError;
+        throw new ProviderError(error.code, error.retryable || fallbackError.retryable, fallbackError.code);
+      }
     }
   }
   extract(text: string, catalog: CatalogItemContext[], previous?: ExtractedOrderItem[]) { return this.run(provider => provider.extractOrderText(text, catalog, previous)); }

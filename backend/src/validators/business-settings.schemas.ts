@@ -85,12 +85,13 @@ const connectionPatchSchema = z.object({
     return isHttpUrl(value) && !value.includes('?') && !value.includes('#');
   }, 'Use an HTTP or HTTPS endpoint without credentials, query parameters, or fragments').optional(),
   model: z.string().trim().max(150).optional(),
+  visionModel: z.string().trim().max(150).optional(),
   apiKey: z.string().trim().max(4096).refine(value => !/[\u0000-\u001f\u007f]/.test(value), 'API key must not contain control characters').optional()
 }).strict();
 
 export const updateBusinessConnectionsSchema = z.object({
-  primary: connectionPatchSchema.optional(),
-  fallback: connectionPatchSchema.optional()
+  primary: connectionPatchSchema.nullable().optional(),
+  fallback: connectionPatchSchema.nullable().optional()
 }).strict();
 
 export type BusinessSettings = z.infer<typeof businessSettingsSchema>;
@@ -105,6 +106,8 @@ export interface BusinessConnection {
   endpoint: string;
   model: string;
   hasApiKey: boolean;
+  visionModel?: string;
+  source?: 'business' | 'server' | 'disabled' | 'incomplete';
 }
 
 export type BusinessConnections = Record<ConnectionSlot, BusinessConnection>;

@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import { rateLimit } from './middleware/rate-limit.js';
 import { randomUUID } from 'node:crypto';
 import authRoutes from './routes/auth.routes.js';
 import businessRoutes from './routes/business.routes.js';
@@ -29,9 +30,13 @@ export function createApp(localDemo?: express.Router) {
     next();
   });
   app.use(helmet());
-  app.use(cors({ origin: true, credentials: true, exposedHeaders: ['X-Request-ID'] }));
+  const allowedOrigins = new Set([
+    new URL(config.publicAppUrl).origin,
+    ...(process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean),
+  ]);
+  app.use(cors({ origin: (origin, callback) => callback(null, !origin || allowedOrigins.has(origin)), exposedHeaders: ['X-Request-ID'] }));
   if (localDemo) app.use('/api/local-demo',express.json({limit:'8mb'}),localDemo);
-  app.use('/api/orders/extract', authenticate, requireRoles('OWNER', 'STAFF'), express.json({ limit: '4.2mb' }));
+  app.use('/api/orders/extract', authenticate, requireRoles('OWNER', 'STAFF'), rateLimit(12, 60000, req => req.businessId!), express.json({ limit: '4.2mb' }));
   app.use(express.json({ limit: '1mb', verify: (req,res,buffer) => {
     if (req.url?.startsWith('/webhooks/whatsapp/')) (res as any).locals.rawBody = Buffer.from(buffer);
   } }));

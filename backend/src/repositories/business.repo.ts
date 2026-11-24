@@ -16,7 +16,7 @@ function normalizeBusiness(business: Business): Business {
   return { ...business, settings: normalizeBusinessSettings(business.settings) };
 }
 
-const connectionSummaryColumns = 'slot, provider, endpoint, model, (api_key_encrypted IS NOT NULL) AS has_api_key';
+const connectionSummaryColumns = 'slot, provider, endpoint, model, vision_model, (api_key_encrypted IS NOT NULL) AS has_api_key';
 
 export class BusinessRepository {
   static async findById(id: string): Promise<Business | null> {
@@ -130,19 +130,36 @@ export class BusinessRepository {
       const connections = normalizeBusinessConnections(existing.rows);
       for (const slot of ['primary', 'fallback'] as const) {
         const patch = data[slot];
-        if (!patch) continue;
+        if (patch === undefined) continue;
+        if (patch === null) {
+          await client.query('DELETE FROM business_connections WHERE business_id = $1 AND slot = $2', [businessId, slot]);
+          connections[slot] = normalizeBusinessConnections([])[slot];
+          continue;
+        }
         const current = connections[slot];
-        const keyChanged = patch.apiKey !== undefined;
-        const encryptedKey = keyChanged ? encryptConnectionKey(patch.apiKey!, businessId, slot) : null;
+        const provider = patch.provider ?? current.provider;
+        const endpoint = patch.endpoint ?? current.endpoint;
+        const model = patch.model ?? current.model;
+        const visionModel = patch.visionModel ?? (provider === current.provider ? current.visionModel : '') ?? '';
+        const supportedEndpoint = provider === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta'
+          : provider === 'groq' ? 'https://api.groq.com/openai/v1' : null;
+        if (!supportedEndpoint || (endpoint && endpoint.replace(/\/$/, '') !== supportedEndpoint)) {
+          throw new AppError('Select Gemini or Groq and use its official API endpoint.', 400);
+        }
+        if ((patch.apiKey ? true : patch.apiKey === undefined && provider === current.provider && current.hasApiKey) && !model) {
+          throw new AppError('Enter a model ID when saving a provider API key.', 400);
+        }
+        const keyChanged = patch.apiKey !== undefined || (patch.provider !== undefined && patch.provider !== current.provider);
+        const encryptedKey = keyChanged ? encryptConnectionKey(patch.apiKey ?? '', businessId, slot) : null;
         const result = await client.query<ConnectionSummaryRow>(
-          `INSERT INTO business_connections (business_id, slot, provider, endpoint, model, api_key_encrypted)
-           VALUES ($1, $2, $3, $4, $5, $6)
+          `INSERT INTO business_connections (business_id, slot, provider, endpoint, model, vision_model, api_key_encrypted)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (business_id, slot) DO UPDATE SET
-             provider = EXCLUDED.provider, endpoint = EXCLUDED.endpoint, model = EXCLUDED.model,
-             api_key_encrypted = CASE WHEN $7 THEN EXCLUDED.api_key_encrypted ELSE business_connections.api_key_encrypted END,
+             provider = EXCLUDED.provider, endpoint = EXCLUDED.endpoint, model = EXCLUDED.model, vision_model = EXCLUDED.vision_model,
+             api_key_encrypted = CASE WHEN $8 THEN EXCLUDED.api_key_encrypted ELSE business_connections.api_key_encrypted END,
              updated_at = NOW()
            RETURNING ${connectionSummaryColumns}`,
-          [businessId, slot, patch.provider ?? current.provider, patch.endpoint ?? current.endpoint, patch.model ?? current.model, encryptedKey, keyChanged]
+          [businessId, slot, provider, endpoint, model, visionModel, encryptedKey, keyChanged]
         );
         connections[slot] = normalizeBusinessConnections(result.rows)[slot];
       }

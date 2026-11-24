@@ -17,7 +17,8 @@ export const config = {
   port: parseInt(process.env.PORT || '5000', 10),
   databaseUrl: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/orderledger',
   jwtSecret,
-  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
-  publicAppUrl: process.env.PUBLIC_APP_URL || 'http://localhost:5173',
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '2h',
+  publicAppUrl: process.env.PUBLIC_APP_URL || (process.env.RENDER_EXTERNAL_HOSTNAME === 'orderledger-api.onrender.com'
+    ? 'https://orderledger-eight.vercel.app' : 'http://localhost:5173'),
   apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:5000',
 };

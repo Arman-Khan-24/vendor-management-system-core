@@ -309,7 +309,15 @@ test('tenant boundaries and role permissions are enforced on ledger mutations', 
   assert.equal(crossAllocation.status, 400);
   assert.equal((await request(`/api/payments?customerId=${otherCustomer.id}`, undefined, 'GET', second.token)).data.length, 0);
   const { default: jwt } = await import('jsonwebtoken');
-  const delivery = jwt.sign({ userId: owner.user.id, businessId: owner.business.id, role: 'DELIVERY', email: 'delivery@example.test', name: 'Delivery' }, process.env.JWT_SECRET!);
+  const { randomUUID } = await import('node:crypto');
+  const deliveryUser = await pool.query(
+    "INSERT INTO users (business_id, name, email, password_hash, role) VALUES ($1, 'Delivery', 'delivery@example.test', 'fixture', 'DELIVERY') RETURNING id",
+    [owner.business.id],
+  );
+  const claims = { userId: deliveryUser.rows[0].id, businessId: owner.business.id, role: 'DELIVERY' };
+  const legacy = jwt.sign(claims, process.env.JWT_SECRET!, { expiresIn: '1h' });
+  assert.equal((await request('/api/auth/me', undefined, 'GET', legacy)).status, 401);
+  const delivery = jwt.sign(claims, process.env.JWT_SECRET!, { jwtid: randomUUID(), expiresIn: '1h' });
   assert.equal((await request('/api/products', { name: 'Forbidden', unit: 'kg', currentPrice: 1 }, 'POST', delivery)).status, 403);
   assert.equal((await request('/api/payments', { customerId: customer.id, amount: 10 }, 'POST', delivery)).status, 403);
 });

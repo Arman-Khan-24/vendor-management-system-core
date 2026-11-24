@@ -1,6 +1,6 @@
 /** Only codes leave this layer: upstream bodies may contain customer data or keys. */
 export class ProviderError extends Error {
-  constructor(public code: string, public retryable: boolean) { super(code); }
+  constructor(public code: string, public retryable: boolean, public fallbackCode?: string) { super(code); }
 }
 export async function fetchProviderJson(url: string, init: RequestInit): Promise<any> {
   let response: Response;

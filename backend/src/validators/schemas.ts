@@ -12,7 +12,7 @@ export const registerSchema = z.object({
   phone: z.string().min(5).max(20).optional(),
   ownerName: z.string().trim().min(2).max(100),
   email: z.string().trim().toLowerCase().email(),
-  password: z.string().min(8).max(200)
+  password: z.string().min(8).max(200).refine(value => Buffer.byteLength(value, 'utf8') <= 72, 'Password must be 72 UTF-8 bytes or fewer')
 });
 
 export const loginSchema = z.object({

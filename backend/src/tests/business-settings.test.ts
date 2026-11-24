@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDecipheriv, createHash } from 'node:crypto';
 import express from 'express';
-import jwt from 'jsonwebtoken';
+import { mockSessions } from './helpers/auth.js';
 import { config } from '../config/env.js';
 import businessRoutes from '../routes/business.routes.js';
 import { errorHandler } from '../middleware/errorHandler.js';
@@ -106,7 +106,7 @@ test('connection summaries omit credentials and Gemini defaults do not claim a s
   assert.equal(connections.fallback.hasApiKey, false);
   assert.equal(connections.fallback.model, '');
   assert.equal(JSON.stringify(connections).includes('must-not-leak'), false);
-  assert.deepEqual(Object.keys(connections.primary).sort(), ['endpoint', 'hasApiKey', 'model', 'provider']);
+  assert.deepEqual(Object.keys(connections.primary).sort(), ['endpoint', 'hasApiKey', 'model', 'provider', 'source']);
 });
 
 test('stored provider keys use randomized authenticated encryption bound to tenant and slot', () => {
@@ -132,7 +132,9 @@ test('stored provider keys use randomized authenticated encryption bound to tena
   assert.throws(() => decrypt(tenant, 'fallback'));
 });
 
-test('settings routes require owner authorization and validate before database access', async () => {
+test('settings routes require owner authorization and validate before database access', async t => {
+  const sessions = mockSessions();
+  t.after(sessions.restore);
   const app = express();
   app.use(express.json());
   app.use('/api/business', businessRoutes);
@@ -142,7 +144,7 @@ test('settings routes require owner authorization and validate before database a
     const result=await requestInProcess(app,init?.method||'GET',new URL(url).pathname,String(init?.body||''),Object.fromEntries(new Headers(init?.headers)));
     return new Response(result.body,{status:result.status});
   };
-  const tokenFor = (role: string) => jwt.sign({ userId: 'user', businessId: 'tenant', role }, config.jwtSecret);
+  const tokenFor = (role: string) => sessions.token(role, 'tenant');
     for (const role of ['STAFF', 'DELIVERY']) {
       for (const [method, path, body] of [
         ['PATCH', '', { invoiceTrigger: 'Packed' }],
@@ -180,4 +182,24 @@ test('settings routes require owner authorization and validate before database a
     assert.equal(unsupportedProvider.status, 400);
     const providerError = await unsupportedProvider.json() as { details: { path: string }[] };
     assert.equal(providerError.details[0].path, 'primary.provider');
+});
+
+test('login throttling isolates clients targeting the same account', async t => {
+  const { createApp } = await import('../app.js');
+  const { AuthService } = await import('../services/auth.service.js');
+  const { AppError } = await import('../middleware/errorHandler.js');
+  const original = AuthService.login;
+  AuthService.login = async () => { throw new AppError('Invalid email or password', 401); };
+  t.after(() => { AuthService.login = original; });
+
+  const app = createApp();
+  const attempt = (ip: string, email = 'owner@example.test') => requestInProcess(
+    app, 'POST', '/api/auth/login', JSON.stringify({ email, password: 'example-password' }), {}, ip,
+  );
+  for (let attemptNumber = 0; attemptNumber < 10; attemptNumber++) {
+    assert.equal((await attempt('192.0.2.10')).status, 401);
+  }
+  assert.equal((await attempt('192.0.2.10', 'OWNER@example.test')).status, 429);
+  assert.equal((await attempt('192.0.2.11')).status, 401);
+  assert.equal((await attempt('192.0.2.10', 'other@example.test')).status, 401);
 });

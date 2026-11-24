@@ -28,7 +28,7 @@ export function validateBody(schema: ZodSchema) {
       if (error instanceof ZodError) {
         res.status(400).json({
           error: 'Validation error',
-          details: error.errors.map(e => ({ path: e.path.join('.'), message: e.message }))
+          details: error.issues.map(e => ({ path: e.path.join('.'), message: e.message }))
         });
         return;
       }

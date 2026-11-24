@@ -63,42 +63,59 @@ export interface ConnectionSummaryRow {
   endpoint: string;
   model: string;
   has_api_key: boolean;
+  vision_model?: string;
 }
 
 export function normalizeBusinessConnections(rows: readonly ConnectionSummaryRow[]): BusinessConnections {
-  const connections: BusinessConnections = {
-    primary: { provider: 'gemini', endpoint: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-2.5-flash', hasApiKey: false },
-    fallback: { provider: 'groq', endpoint: 'https://api.groq.com/openai/v1', model: '', hasApiKey: false }
-  };
-  for (const row of rows) {
-    if (row.slot === 'primary' || row.slot === 'fallback') {
-      connections[row.slot] = { provider: row.provider, endpoint: row.endpoint, model: row.model, hasApiKey: row.has_api_key };
-    }
+  const connections = {} as BusinessConnections;
+  for (const slot of ['primary', 'fallback'] as const) {
+    const prefix = 'AI_' + slot.toUpperCase();
+    const envProvider = process.env[prefix + '_PROVIDER'];
+    const provider: ConnectionProvider = envProvider === 'groq' || envProvider === 'gemini'
+      ? envProvider : slot === 'primary' ? 'gemini' : 'groq';
+    const defaultKey = process.env[prefix + '_API_KEY'] || (provider === 'gemini' ? process.env.GEMINI_API_KEY : process.env.GROQ_API_KEY);
+    const model = process.env[prefix + '_MODEL'] || (provider === 'gemini' ? 'gemini-2.5-flash' : defaultKey ? 'llama-3.3-70b-versatile' : '');
+    const visionModel = process.env[prefix + '_VISION_MODEL'];
+    const saved = rows.find(row => row.slot === slot);
+    connections[slot] = saved ? {
+      provider: saved.provider, endpoint: saved.endpoint, model: saved.model, hasApiKey: saved.has_api_key,
+      source: saved.has_api_key ? (saved.model ? 'business' : 'incomplete') : 'disabled',
+      ...(saved.vision_model ? { visionModel: saved.vision_model } : {}),
+    } : {
+      provider, endpoint: provider === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.groq.com/openai/v1',
+      model, hasApiKey: false, source: defaultKey ? 'server' : 'incomplete',
+      ...(visionModel ? { visionModel } : {}),
+    };
   }
   return connections;
 }
 
-/** Ciphertext is tenant/slot-bound. Keep JWT_SECRET stable or re-enter saved provider keys after rotation. */
+function providerEncryptionKey(version: string, legacySecret?: string): Buffer {
+  const secret = version === 'v2' ? process.env.PROVIDER_ENCRYPTION_KEY : legacySecret || config.jwtSecret;
+  if (!secret || (version === 'v2' && !/^[0-9a-f]{64}$/i.test(secret))) throw new Error('Invalid provider encryption key configuration.');
+  return createHash('sha256').update('orderledger:provider-connections:' + version + '\0').update(secret).digest();
+}
 export function encryptConnectionKey(apiKey: string, businessId: string, slot: ConnectionSlot): string | null {
   return encryptSecret(apiKey, businessId, slot);
 }
 
 export function encryptSecret(apiKey: string, businessId: string, purpose: string): string | null {
   if (!apiKey) return null;
-  const key = createHash('sha256').update('orderledger:provider-connections:v1\0').update(config.jwtSecret).digest();
+  const version = process.env.PROVIDER_ENCRYPTION_KEY ? 'v2' : 'v1';
+  const key = providerEncryptionKey(version);
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
   cipher.setAAD(Buffer.from(`${businessId}:${purpose}`));
   const ciphertext = Buffer.concat([cipher.update(apiKey, 'utf8'), cipher.final()]);
-  return ['v1', iv.toString('base64url'), cipher.getAuthTag().toString('base64url'), ciphertext.toString('base64url')].join('.');
+  return [version, iv.toString('base64url'), cipher.getAuthTag().toString('base64url'), ciphertext.toString('base64url')].join('.');
 }
 
 export function decryptSecret(value: string | null, businessId: string, purpose: string): string {
   if (!value) return '';
   try {
     const [version, iv, tag, ciphertext, extra] = value.split('.');
-    if (version !== 'v1' || extra !== undefined || !iv || !tag || !ciphertext) throw new Error();
-    const key = createHash('sha256').update('orderledger:provider-connections:v1\0').update(config.jwtSecret).digest();
+    if (!['v1', 'v2'].includes(version) || extra !== undefined || !iv || !tag || !ciphertext) throw new Error();
+    const key = providerEncryptionKey(version, process.env.LEGACY_PROVIDER_JWT_SECRET);
     const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'));
     decipher.setAAD(Buffer.from(`${businessId}:${purpose}`));
     decipher.setAuthTag(Buffer.from(tag, 'base64url'));

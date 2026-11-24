@@ -1,9 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import jwt from 'jsonwebtoken';
+import { mockSessions } from './helpers/auth.js';
 import { createApp } from '../app.js';
-import { config } from '../config/env.js';
 import { WhatsAppRepository } from '../repositories/whatsapp.repo.js';
 import type { WhatsAppRuntimeConnection } from '../services/whatsapp/whatsapp.provider.js';
 import { requestInProcess } from './helpers/http.js';
@@ -37,10 +36,12 @@ test('signed webhook persists the batch before acknowledging, and modified JSON 
     assert.equal((await request('POST',`/webhooks/whatsapp/${businessId}`,body.replace('2kg','3kg'),{'x-hub-signature-256':signature})).status,401);assert.equal(saved,false);
   }finally{WhatsAppRepository.runtimeConnection=runtime;WhatsAppRepository.recordInbound=record;}
 });
-test('WhatsApp history uses JWT tenant identity and connection writes require owner permission',async()=>{
+test('WhatsApp history uses JWT tenant identity and connection writes require owner permission',async t=>{
+  const sessions=mockSessions();
+  t.after(sessions.restore);
   const original=WhatsAppRepository.list;
   WhatsAppRepository.list=async(id)=>{assert.equal(id,businessId);return [];};
-  const staff=jwt.sign({userId:'test',businessId,role:'STAFF'},config.jwtSecret);
+  const staff=sessions.token('STAFF',businessId);
   try{
     assert.equal((await request('GET','/api/whatsapp/messages')).status,401);
     assert.equal((await request('GET','/api/whatsapp/messages?businessId=other','',{authorization:'Bearer '+staff})).status,200);

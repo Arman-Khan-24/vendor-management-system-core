@@ -4,7 +4,7 @@ import { mkdtemp,mkdir,readFile,writeFile,rm,stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import dotenv from 'dotenv';
-import jwt from 'jsonwebtoken';
+import { mockSessions } from './helpers/auth.js';
 import { createApp } from '../app.js';
 import { config } from '../config/env.js';
 import { createLocalDemoRouter } from '../routes/local-demo.routes.js';
@@ -55,14 +55,16 @@ test('local demo routes are absent in a normal app and block remote hosts, remot
   assert.equal((await requestInProcess(app,'GET','/api/local-demo/status','',{},'192.0.2.1')).status,403);
   const env=config.env;config.env='production';try{assert.throws(()=>createApp(createLocalDemoRouter(demo)),/unavailable in production/);}finally{config.env=env;}
 });
-test('local session requires its request header and message submission is owner/tenant scoped',async()=>{
+test('local session requires its request header and message submission is owner/tenant scoped',async t=>{
+  const sessions=mockSessions();
+  t.after(sessions.restore);
   const businessId='10000000-0000-4000-8000-000000000001',customerId='10000000-0000-4000-8000-000000000002';
   let received=false;
   const demo={status:()=>({available:true}),session:{business:{id:businessId},token:'synthetic'},enqueue:async(customer:string,text:string)=>{assert.equal(customer,customerId);assert.equal(text,'Tomato 500 g');received=true;return {queued:true};}} as unknown as LocalDemoService;
   const app=createApp(createLocalDemoRouter(demo));
   assert.equal((await requestInProcess(app,'POST','/api/local-demo/session','{}')).status,403);
   assert.equal((await requestInProcess(app,'POST','/api/local-demo/session','{}',{'x-orderledger-local-demo':'1'})).status,200);
-  const token=(role:string,tenant=businessId)=>jwt.sign({userId:'local',businessId:tenant,role},config.jwtSecret);
+  const token=(role:string,tenant=businessId)=>sessions.token(role,tenant);
   const body=JSON.stringify({customerId,text:'Tomato 500 g'});
   assert.equal((await requestInProcess(app,'POST','/api/local-demo/messages',body,{authorization:'Bearer '+token('STAFF')})).status,403);
   assert.equal((await requestInProcess(app,'POST','/api/local-demo/messages',body,{authorization:'Bearer '+token('OWNER',customerId)})).status,403);

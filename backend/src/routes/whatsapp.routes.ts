@@ -1,4 +1,7 @@
+import { readFile } from 'node:fs/promises';
+import { z } from 'zod';
 import { Router } from 'express';
+import { rateLimit } from '../middleware/rate-limit.js';
 import { authenticate,requireRoles } from '../middleware/auth.middleware.js';
 import { validateBody,validateUuidParam } from '../middleware/validate.middleware.js';
 import { whatsappConnectionSchema,reviewOrderSchema } from '../validators/whatsapp.schemas.js';
@@ -28,13 +31,17 @@ router.post('/connection/test',requireRoles('OWNER'),async (req,res,next) => {
     res.json(await new MetaWhatsAppProvider(connection).testConnection());
   } catch(error) { next(error instanceof ProviderError ? new AppError('Meta connection failed ('+error.code+'). Check the saved ID, API version and token.',400) : error); }
 });
-router.post('/ai/test',requireRoles('OWNER'),async (req,res,next) => {
+router.post('/ai/test', requireRoles('OWNER'), rateLimit(12, 60000, req => req.businessId!),
+  validateBody(z.object({ slot: z.enum(['primary', 'fallback']).optional(), mode: z.enum(['text', 'photo']).default('text') }).strict()), async (req,res,next) => {
   try {
-    const ai = await getBusinessAi(req.businessId!);
-    const result = await ai.extract('Test Product 2 kg',[{ id:'synthetic',name:'Test Product',unit:'kg',current_price:1 }]);
-    if (result.warnings.length || result.items.length!==1 || result.items[0].quantity!==2 || result.items[0].unit!=='kg') throw new AppError('The provider responded but the sample order was not extracted correctly. Check the selected model.',400);
+    const ai = await getBusinessAi(req.businessId!, req.body.slot);
+    const catalog = [{ id: 'synthetic', name: 'Test Product', unit: 'kg', current_price: 1 }];
+    const result = req.body.mode === 'photo'
+      ? await ai.extractImage(await readFile(new URL('../assets/ai-test-order.png', import.meta.url)), 'image/png', catalog)
+      : await ai.extract('Test Product 2 kg', catalog);
+    if (result.warnings.length || result.items.length !== 1 || result.items[0].product.toLowerCase() !== 'test product' || result.items[0].quantity !== 2 || result.items[0].unit.toLowerCase() !== 'kg') throw new AppError('The provider responded but the sample order was not extracted correctly. Check the selected model.',400);
     res.json({ provider: result.provider,model: result.model,wasFallback: result.wasFallback,items: result.items,warnings: result.warnings });
-  } catch(error) { next(error instanceof ProviderError ? new AppError('AI test failed ('+error.code+'). Check provider, model and key.',400) : error); }
+  } catch(error) { next(error instanceof ProviderError ? new AppError('AI test failed ('+error.code + (error.fallbackCode ? ', fallback: ' + error.fallbackCode : '') + '). Check provider, model and key.', error.code === 'SHARED_AI_QUOTA_EXCEEDED' ? 429 : error.code === 'SHARED_AI_DISABLED' ? 403 : 400) : error); }
 });
 router.get('/revision',async (req,res,next) => {
   try {

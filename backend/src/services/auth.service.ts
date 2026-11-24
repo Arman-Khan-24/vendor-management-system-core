@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { config } from '../config/env.js';
@@ -123,6 +124,7 @@ export class AuthService {
     role: UserRole;
   }) {
     email = email.toLowerCase().trim();
+    if (Buffer.byteLength(password, 'utf8') > 72) throw new AppError('Password must be 72 UTF-8 bytes or fewer.', 400);
     const passwordHash = await bcrypt.hash(password, 10);
     return withTransaction(async client => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [email]);
@@ -151,6 +153,8 @@ export class AuthService {
 
   private static generateToken(payload: AuthUserPayload): string {
     return jwt.sign(payload, config.jwtSecret, {
+      algorithm: 'HS256',
+      jwtid: randomUUID(),
       expiresIn: config.jwtExpiresIn as any
     });
   }

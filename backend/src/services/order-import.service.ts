@@ -32,6 +32,12 @@ export class OrderImportService {
       };
     } catch (error) {
       if (error instanceof ProviderError) {
+        if (error.code === 'SHARED_AI_QUOTA_EXCEEDED') throw new AppError('The daily shared AI limit has been reached. Try tomorrow or configure a business key.', 429);
+        if (error.code === 'SHARED_AI_DISABLED') throw new AppError('Shared AI is unavailable for this business. Configure a business key.', 403);
+        if (error.fallbackCode) throw new AppError(
+          'Order extraction failed. Primary: ' + error.code + '. Fallback: ' + error.fallbackCode + '. Check both AI connections.',
+          error.code === 'PROVIDER_HTTP_429' ? 429 : 502
+        );
         if (error.code === 'PROVIDER_HTTP_429') throw new AppError('Your AI provider has reached its rate or quota limit. Wait before retrying, check the provider quota, or configure a working fallback in AI connections.', 429);
         throw new AppError('Order extraction failed (' + error.code + '). Check the saved AI connection and use an image-capable model for photos.', 502);
       }

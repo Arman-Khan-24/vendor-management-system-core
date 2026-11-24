@@ -1,8 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import jwt from 'jsonwebtoken';
+import { mockSessions } from './helpers/auth.js';
 import { createApp } from '../app.js';
-import { config } from '../config/env.js';
 import { pool } from '../database/connection.js';
 import { encryptSecret } from '../services/business-settings.service.js';
 import { OrderImportService } from '../services/order-import.service.js';
@@ -81,7 +80,8 @@ test('import route authenticates and validates before extraction, without creati
     assert.equal(id, businessId); assert.equal(input.text, 'Tomato 2 kg'); calls++;
     return { items: [{ productId: catalog[0].id, quantity: 2, inputProduct: 'Tomato', inputQuantity: 2, inputUnit: 'kg' }], warnings: [], provider: 'gemini', model: 'synthetic', wasFallback: false };
   };
-  const send = (role: string, body: unknown) => requestInProcess(createApp(), 'POST', '/api/orders/extract', JSON.stringify(body), { authorization: 'Bearer ' + jwt.sign({ userId: 'test', businessId, role }, config.jwtSecret) });
+  const sessions = mockSessions();
+  const send = (role: string, body: unknown) => requestInProcess(createApp(), 'POST', '/api/orders/extract', JSON.stringify(body), { authorization: 'Bearer ' + sessions.token(role, businessId) });
   try {
     assert.equal((await requestInProcess(createApp(), 'POST', '/api/orders/extract', '{}')).status, 401);
     assert.equal((await send('DELIVERY', { text: 'Tomato 2 kg' })).status, 403);
@@ -89,5 +89,31 @@ test('import route authenticates and validates before extraction, without creati
     assert.equal((await send('STAFF', { text: 'Tomato 2 kg', businessId: 'another' })).status, 400);
     assert.equal((await send('STAFF', { text: 'Tomato 2 kg' })).status, 200);
     assert.equal(calls, 1);
-  } finally { OrderImportService.extract = original; }
+  } finally { sessions.restore(); OrderImportService.extract = original; }
+});
+
+test('fallback stays lazy and preserves both provider failure codes', async () => {
+  const { AiOrderExtractionService } = await import('../services/ai/ai.service.js');
+  const { ProviderError } = await import('../services/provider-http.js');
+  const result = { items: [], warnings: [], model: 'sample' };
+  const primary = {
+    name: 'primary',
+    extractOrderText: async () => result,
+    extractOrderImage: async () => result,
+  };
+  let fallbackCalls = 0;
+  const ai = new AiOrderExtractionService(primary, () => {
+    fallbackCalls++;
+    throw new Error('Unreadable credential');
+  });
+  assert.equal((await ai.extract('test', [])).provider, 'primary');
+  assert.equal(fallbackCalls, 0);
+  primary.extractOrderText = async () => { throw new ProviderError('PROVIDER_HTTP_429', true); };
+  await assert.rejects(ai.extract('test', []), error => {
+    assert.ok(error instanceof ProviderError);
+    assert.equal(error.code, 'PROVIDER_HTTP_429');
+    assert.equal(error.fallbackCode, 'FALLBACK_CONFIGURATION_ERROR');
+    return true;
+  });
+  assert.equal(fallbackCalls, 1);
 });

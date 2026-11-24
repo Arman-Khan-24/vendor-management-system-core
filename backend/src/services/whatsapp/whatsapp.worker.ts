@@ -14,7 +14,8 @@ export async function processNextWhatsAppJob(transport?: WhatsAppTransport): Pro
       ? error.retryable || (job.kind==='inbound' && error.code==='PROVIDER_RESPONSE_UNCONFIRMED')
       : !(error instanceof AppError);
     await WhatsAppRepository.fail(job,code,retryable);
-    console.error('WhatsApp job failed', { jobId: job.id, code });
+    const fallbackCode = error instanceof ProviderError ? error.fallbackCode : undefined;
+    console.error('WhatsApp job failed', { jobId: job.id, code, fallbackCode });
   }
   return true;
 }
