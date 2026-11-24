@@ -78,19 +78,52 @@ function queryString(params: Record<string, unknown> = {}) {
   return query.size ? '?' + query.toString() : '';
 }
 export class ApiClient {
-  static hasToken() { return !!localStorage.getItem(TOKEN_KEY); }
-  static setToken(token: string) { localStorage.setItem(TOKEN_KEY, token); }
-  static clearToken() { localStorage.removeItem(TOKEN_KEY); }
+  private static cookieIdentity?: { userId: string; businessId: string };
+  private static sessionVersion = 0;
+  private static usesCookie() { return import.meta.env.PROD && !this.getConnection(); }
+  private static sessionMarker() { return this.usesCookie() ? this.sessionVersion : sessionStorage.getItem(TOKEN_KEY); }
+  static hasToken() {
+    if (!this.usesCookie()) return !!sessionStorage.getItem(TOKEN_KEY);
+    this.setToken();
+    return true;
+  }
+  static setToken(token?: string) {
+    localStorage.removeItem(TOKEN_KEY);
+    if (token && !this.usesCookie()) sessionStorage.setItem(TOKEN_KEY, token);
+    else sessionStorage.removeItem(TOKEN_KEY);
+  }
+  static async revokeSession() {
+    const cookie = this.usesCookie();
+    const token = cookie ? null : sessionStorage.getItem(TOKEN_KEY);
+    if (cookie ? !this.cookieIdentity : !token) return;
+    const headers = new Headers();
+    if (cookie && this.cookieIdentity) {
+      headers.set('X-OrderLedger-Session', 'cookie');
+      headers.set('X-OrderLedger-Identity', this.cookieIdentity.businessId + ':' + this.cookieIdentity.userId);
+    } else {
+      headers.set('Authorization', 'Bearer ' + token);
+    }
+    await fetch(this.getBase() + '/auth/logout', {
+      method: 'POST', headers,
+      credentials: cookie ? 'same-origin' : 'omit', redirect: 'error', keepalive: true,
+    });
+  }
+  static clearToken() {
+    this.sessionVersion++;
+    this.cookieIdentity = undefined;
+    sessionStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+  }
   static getConnection(): string { return connectionAddress(localStorage.getItem(CONNECTION_KEY) ?? (import.meta.env.VITE_API_URL || '')); }
   static getServerAddress(value = this.getConnection()): string { return connectionAddress(value) || normalizeApiUrl(import.meta.env.VITE_PROXY_API_URL || ''); }
   static wouldChangeServer(value: string): boolean {
     try { return this.getServerAddress(value) !== this.getServerAddress(); } catch { return true; }
   }
-  static getBase(): string { return this.getServerAddress() + '/api'; }
+  static getBase(): string { return this.usesCookie() ? '/api' : this.getServerAddress() + '/api'; }
   static setConnection(value: string) {
     const normalized = connectionAddress(value);
     const changedServer = this.wouldChangeServer(value);
-    if (changedServer) this.clearToken();
+    if (changedServer) { void this.revokeSession().catch(() => undefined); this.clearToken(); }
     localStorage.setItem(CONNECTION_KEY, normalized);
     if (changedServer) window.dispatchEvent(new Event('orderledger:connection'));
   }
@@ -115,13 +148,20 @@ export class ApiClient {
   }
   private static async response(endpoint: string, options: RequestInit = {}) {
     const base = this.getBase();
-    const token = localStorage.getItem(TOKEN_KEY);
+    const cookie = this.usesCookie();
+    const token = cookie ? null : sessionStorage.getItem(TOKEN_KEY);
     const headers = new Headers(options.headers);
     if (options.body) headers.set('Content-Type', 'application/json');
+    if (cookie) {
+      headers.set('X-OrderLedger-Session', 'cookie');
+      if (this.cookieIdentity && !endpoint.startsWith('/auth/')) {
+        headers.set('X-OrderLedger-Identity', this.cookieIdentity.businessId + ':' + this.cookieIdentity.userId);
+      }
+    }
     if (token) headers.set('Authorization', 'Bearer ' + token);
     let response: Response;
     try {
-      response = await fetchApi(base + endpoint, { ...options, headers, credentials: 'omit', redirect: 'error' });
+      response = await fetchApi(base + endpoint, { ...options, headers, credentials: cookie ? 'same-origin' : 'omit', redirect: 'error' });
     } catch (error) {
       const retryHint = headers.has('Idempotency-Key') ? ' Your submission is unconfirmed. Retry with the same details; it will not be recorded twice.' : '';
       if (error instanceof Error && error.name === 'TimeoutError') throw new ApiError('The server took too long to respond.' + (retryHint || ' Check your connection, then refresh before retrying a save.'), 0);
@@ -130,7 +170,7 @@ export class ApiClient {
     if (!response.ok) {
       const body = await response.json().catch(() => null);
       const data = body && typeof body === 'object' ? body : {};
-      if (response.status === 401 && token && !endpoint.startsWith('/auth/')) {
+      if (response.status === 401 && (cookie || token) && !endpoint.startsWith('/auth/')) {
         this.clearToken();
         window.dispatchEvent(new Event('orderledger:unauthorized'));
       }
@@ -159,10 +199,10 @@ export class ApiClient {
   private static write<T>(endpoint: string, body: unknown, method = 'POST') { return this.request<T>(endpoint, { method, body: JSON.stringify(body) }); }
   private static async writeOnce<T>(endpoint: string, body: unknown): Promise<T> {
     const base = this.getBase();
-    const token = localStorage.getItem(TOKEN_KEY);
+    const marker = this.sessionMarker();
     let identity: { userId: string; businessId: string };
     try {
-      identity = JSON.parse(atob(token!.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      identity = this.usesCookie() ? this.cookieIdentity! : JSON.parse(atob(String(marker).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
       if (!identity.userId || !identity.businessId) throw new Error();
     } catch { throw new ApiError('Your session has expired. Sign in again.', 401); }
     const scope = JSON.stringify([(this.getServerAddress() || normalizeApiUrl(this.getConnection())) + '/api', identity.businessId, identity.userId, endpoint]);
@@ -177,7 +217,7 @@ export class ApiClient {
       if (health?.service !== 'OrderLedger Core API' || health?.status !== 'ok' || health?.apiVersion !== 2 || health?.capabilities?.idempotentWrites !== true) {
         throw new ApiError('This server needs an update before it can safely save orders and payments. Deploy the current OrderLedger backend, then retry.', 503);
       }
-      if (this.getBase() !== base || localStorage.getItem(TOKEN_KEY) !== token) throw new ApiError('Your session changed. Reload the workspace before saving.', 401);
+      if (this.getBase() !== base || this.sessionMarker() !== marker) throw new ApiError('Your session changed. Reload the workspace before saving.', 401);
       const result = await this.request<T>(endpoint, { method: 'POST', body: JSON.stringify(body), headers: { 'Idempotency-Key': key } });
       if (!result || typeof (result as { id?: unknown }).id !== 'string') throw new ApiError('The server did not confirm the saved record. Retry with the same details.', 0);
       return result;
@@ -187,9 +227,9 @@ export class ApiClient {
     const records: T[] = [];
     const seen = new Set<string>();
     const base = this.getBase();
-    const token = localStorage.getItem(TOKEN_KEY);
+    const marker = this.sessionMarker();
     for (let offset = 0; ; offset += 500) {
-      if (this.getBase() !== base || localStorage.getItem(TOKEN_KEY) !== token) throw new ApiError('Your session changed. Please reload the workspace.', 0);
+      if (this.getBase() !== base || this.sessionMarker() !== marker) throw new ApiError('Your session changed. Please reload the workspace.', 0);
       const page = await this.request<T[]>(endpoint + queryString({ ...params, limit: 500, offset }));
       if (!Array.isArray(page)) throw new ApiError('The server returned an invalid record list.', 0);
       const previousCount = records.length;
@@ -200,9 +240,24 @@ export class ApiClient {
       if (records.length === previousCount) throw new ApiError('The server could not load the next page. Refresh and try again.', 0);
     }
   }
-  static login(body: { email: string; password: string }) { return this.write<{ token: string; user: User; business: Business }>('/auth/login', body); }
-  static register(body: { businessName: string; businessSlug: string; categoryTemplate: string; phone?: string; ownerName: string; email: string; password: string }) { return this.write<{ token: string; user: User; business: Business }>('/auth/register', body); }
-  static getMe() { return this.request<{ user: User; business: Business }>('/auth/me'); }
+  static login(body: { email: string; password: string }) { return this.startSession('/auth/login', body); }
+  static register(body: { businessName: string; businessSlug: string; categoryTemplate: string; phone?: string; ownerName: string; email: string; password: string }) { return this.startSession('/auth/register', body); }
+  private static async startSession(endpoint: string, body: unknown) {
+    const result = await this.write<{ token?: string; user: User; business: Business }>(endpoint, body);
+    if (this.usesCookie()) {
+      this.sessionVersion++;
+      this.cookieIdentity = { userId: result.user.id, businessId: result.business.id };
+    }
+    return result;
+  }
+  static async getMe() {
+    const marker = this.sessionMarker();
+    const result = await this.request<{ user: User & { userId?: string }; business: Business }>('/auth/me');
+    if (this.usesCookie() && marker === this.sessionMarker()) {
+      this.cookieIdentity = { userId: result.user.userId || result.user.id, businessId: result.business.id };
+    }
+    return result;
+  }
   static getTemplates() { return this.request<{ templates: { id: string; name: string }[] }>('/auth/templates'); }
   static getBusiness() { return this.request<Business>('/business'); }
   static async updateBusiness(body: BusinessPatch) {
@@ -217,12 +272,12 @@ export class ApiClient {
       throw error;
     }
   }
-  static async updateConnections(body: Partial<Record<'primary' | 'fallback', Partial<Omit<ProviderConnection, 'hasApiKey'>> & { apiKey?: string }>>) { return providerSettings(await this.write<unknown>('/business/connections', body, 'PATCH')); }
+  static async updateConnections(body: Partial<Record<'primary' | 'fallback', (Partial<Omit<ProviderConnection, 'hasApiKey'>> & { apiKey?: string }) | null>>) { return providerSettings(await this.write<unknown>('/business/connections', body, 'PATCH')); }
   static getDashboard() { return this.request<DashboardSummary>('/dashboard/summary'); }
   static async getWhatsAppConnection() { return whatsappSettings(await this.request<unknown>('/whatsapp/connection')); }
   static async updateWhatsAppConnection(body: WhatsAppConnectionPatch) { return whatsappSettings(await this.write<unknown>('/whatsapp/connection',body,'PATCH')); }
   static testWhatsAppConnection() { return this.request<{ displayPhoneNumber: string }>('/whatsapp/connection/test', { method: 'POST', body: '{}', signal: AbortSignal.timeout(CONNECTION_TIMEOUT) }); }
-  static testAiConnection() { return this.request<{ provider: string; model: string; wasFallback: boolean; warnings: string[] }>('/whatsapp/ai/test', { method: 'POST', body: '{}', signal: AbortSignal.timeout(CONNECTION_TIMEOUT) }); }
+  static testAiConnection(slot: 'primary' | 'fallback', mode: 'text' | 'photo') { return this.request<{ provider: string; model: string; wasFallback: boolean; warnings: string[] }>('/whatsapp/ai/test', { method: 'POST', body: JSON.stringify({ slot, mode }), signal: AbortSignal.timeout(CONNECTION_TIMEOUT) }); }
   static async getWhatsAppMessages(): Promise<WhatsAppMessage[]> {
     const messages = await this.request<unknown>('/whatsapp/messages');
     if (!Array.isArray(messages)) {

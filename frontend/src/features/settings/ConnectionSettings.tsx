@@ -64,7 +64,7 @@ export function ProviderConnections({ onDirtyChange, onBusyChange }: { onDirtyCh
   const save = async (event: React.FormEvent) => {
     event.preventDefault(); if (!draft || !stored) return;
     setBusy(true); setError(null); setSaved(false);
-    const payload = (value: ProviderDraft, original: ProviderConnection) => Object.fromEntries(Object.entries({ provider: value.provider, endpoint: value.endpoint.trim(), model: value.model.trim(), ...(value.clearKey ? { apiKey: '' } : value.apiKey.trim() ? { apiKey: value.apiKey.trim() } : {}) }).filter(([key, entry]) => key === 'apiKey' || entry !== original[key as keyof ProviderConnection]));
+    const payload = (value: ProviderDraft, original: ProviderConnection) => Object.fromEntries(Object.entries({ provider: value.provider, endpoint: value.endpoint.trim(), model: value.model.trim(), visionModel: value.provider === 'groq' ? value.visionModel?.trim() : undefined, ...(value.clearKey ? { apiKey: '' } : value.apiKey.trim() ? { apiKey: value.apiKey.trim() } : {}) }).filter(([key, entry]) => entry !== undefined && (key === 'apiKey' || entry !== original[key as keyof ProviderConnection])));
     const changes = Object.fromEntries((['primary', 'fallback'] as const).flatMap(slot => {
       const patch = payload(draft[slot], stored[slot]);
       return Object.keys(patch).length ? [[slot, patch]] : [];
@@ -72,20 +72,39 @@ export function ProviderConnections({ onDirtyChange, onBusyChange }: { onDirtyCh
     try { const connections = await ApiClient.updateConnections(changes); setStored(connections); setDraft(toDraft(connections)); setSaved(true); }
     catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
+  const testSlot = async (slot: 'primary' | 'fallback', mode: 'text' | 'photo') => {
+    setBusy(true); setError(null); setTestResult(null);
+    try {
+      const result = await ApiClient.testAiConnection(slot, mode);
+      setTestResult(`${slot === 'primary' ? 'Primary' : 'Fallback'} ${mode} passed with ${result.provider} (${result.model}).`);
+    } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
+  };
+  const resetSlot = async (slot: 'primary' | 'fallback') => {
+    setBusy(true); setError(null); setTestResult(null); setSaved(false);
+    try {
+      const connections = await ApiClient.updateConnections({ [slot]: null });
+      setStored(connections); setDraft(toDraft(connections)); setSaved(true);
+    } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
+  };
   return <div className="stack">
     <SectionHeading title="AI provider connections" description="Gemini and Groq read text and photos in New order. The same connection also handles incoming WhatsApp orders. If no business connection is saved, the website’s configured AI is used." />
     <ErrorNotice message={error} retry={!draft ? load : undefined} />
     {!draft ? !error && <LoadingState label="Loading connections…" /> : <form onSubmit={save}><fieldset className="stack settings-fields" disabled={busy}>
       {(['primary', 'fallback'] as const).map(key => <div className="stack" key={key}>
-        <div className="row between"><h3>{key === 'primary' ? 'Primary provider' : 'Fallback provider'}</h3><Badge variant={draft[key].hasApiKey ? 'success' : 'default'}>{draft[key].hasApiKey ? 'Key saved' : 'No saved key'}</Badge></div>
-        <div className="form-grid"><Select label={key === 'primary' ? 'Primary provider' : 'Fallback provider'} value={draft[key].provider} onChange={e => { const provider = e.target.value as ProviderConnection['provider']; change(key, { provider, ...providerDefaults[provider] }); }}><option value="openai" disabled>OpenAI (not supported for order extraction)</option><option value="gemini">Google Gemini</option><option value="groq">Groq</option><option value="custom" disabled>Custom (not supported for order extraction)</option></Select><Input label={key === 'primary' ? 'Primary model' : 'Fallback model'} value={draft[key].model} maxLength={150} placeholder="Model ID from your provider" onChange={e => change(key, { model: e.target.value })} /></div>
+        <div className="row between"><h3>{key === 'primary' ? 'Primary provider' : 'Fallback provider'}</h3><Badge variant={draft[key].hasApiKey ? 'success' : 'default'}>{stored?.[key].source === 'server' ? 'Server default' : stored?.[key].source === 'disabled' ? 'Disabled' : stored?.[key].source === 'incomplete' ? 'Setup incomplete' : draft[key].hasApiKey ? 'Business key saved' : 'No saved key'}</Badge></div>
+        <div className="form-grid"><Select label={key === 'primary' ? 'Primary provider' : 'Fallback provider'} value={draft[key].provider} onChange={e => { const provider = e.target.value as ProviderConnection['provider']; change(key, { provider, ...providerDefaults[provider], visionModel: undefined }); }}><option value="openai" disabled>OpenAI (not supported for order extraction)</option><option value="gemini">Google Gemini</option><option value="groq">Groq</option><option value="custom" disabled>Custom (not supported for order extraction)</option></Select><Input label={key === 'primary' ? 'Primary model' : 'Fallback model'} value={draft[key].model} maxLength={150} placeholder="Model ID from your provider" onChange={e => change(key, { model: e.target.value })} /></div>
+        {draft[key].provider === 'groq' && <Input label="Photo model" value={draft[key].visionModel ?? ''} maxLength={150} placeholder="Uses the text model when blank" onChange={e => change(key, { visionModel: e.target.value })} />}
         <Input label={key === 'primary' ? 'Primary endpoint' : 'Fallback endpoint'} type="url" value={draft[key].endpoint} required onChange={e => change(key, { endpoint: e.target.value })} />
         <Input label={key === 'primary' ? 'Primary API key' : 'Fallback API key'} type="password" autoComplete="new-password" value={draft[key].apiKey} disabled={draft[key].clearKey} onChange={e => change(key, { apiKey: e.target.value })} placeholder={draft[key].hasApiKey ? 'Leave blank to keep saved key' : 'Enter an API key'} hint="Stored on the server. Saved keys are never shown or exported in a blueprint." />
         {draft[key].hasApiKey && <div className="check-options"><label><input type="checkbox" checked={draft[key].clearKey} onChange={e => change(key, { clearKey: e.target.checked, apiKey: '' })} />Remove saved {key} key</label></div>}
+        <Button type="button" variant="outline" disabled={dirty} onClick={() => void resetSlot(key)}>Use server default</Button>
+        <div className="row wrap">
+          <Button type="button" variant="outline" disabled={dirty} onClick={() => void testSlot(key, 'text')}>Test text</Button>
+          <Button type="button" variant="outline" disabled={dirty} onClick={() => void testSlot(key, 'photo')}>Test photo</Button>
+        </div>
         {key === 'primary' && <div className="section-divider" />}
       </div>)}
       <p className="form-note">Choose Gemini or Groq for ordering. For photo orders, select an image-capable model. Enable WhatsApp separately after testing these settings.</p>
-      <Button variant="outline" disabled={dirty||busy} onClick={async()=>{setBusy(true);setError(null);setTestResult(null);try{const result=await ApiClient.testAiConnection();setTestResult(`Sample order extracted by ${result.provider} (${result.model})${result.wasFallback?' using fallback':''}.`);}catch(e){setError(errorMessage(e));}finally{setBusy(false);}}}>Test saved AI connection</Button>
       {testResult&&<p className="success-note" role="status">{testResult}</p>}
       {saved && <p className="success-note" role="status"><CheckCircle2 size={16} className="inline" aria-hidden="true" /> Connections saved.</p>}
       {dirty && <p className="form-note">You have unsaved provider changes.</p>}

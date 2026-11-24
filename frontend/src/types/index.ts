@@ -29,6 +29,8 @@ export interface ProviderConnection {
   endpoint: string;
   model: string;
   hasApiKey: boolean;
+  visionModel?: string;
+  source?: 'business' | 'server' | 'disabled' | 'incomplete';
 }
 export interface Connections { primary: ProviderConnection; fallback: ProviderConnection }
 export interface WhatsAppConnection {

@@ -60,6 +60,7 @@ export function App() {
 
   const logout = useCallback(() => {
     session.current++; load.current++; detail.current++;
+    void ApiClient.revokeSession().catch(() => undefined);
     ApiClient.clearToken();
     setUser(null); setBusiness(null); setAuthError(null); setAuthLoading(false);
     setOrders([]); setCustomers([]); setProducts([]); setPayments([]); setInvoices([]); setSummary(null);

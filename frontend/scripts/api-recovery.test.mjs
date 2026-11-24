@@ -7,7 +7,7 @@ import { webcrypto } from 'node:crypto';
 
 // Execute the actual client and its dependencies with synthetic HTTP responses.
 // No server, credentials, browser, or production records are used.
-async function client(fetch) {
+async function client(fetch, production = false) {
   const values = new Map([['orderledger_token', 'synthetic-session']]);
   const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
   const waits = [], events = [], modules = new Map();
@@ -23,7 +23,7 @@ async function client(fetch) {
     if (modules.has(url.href)) return modules.get(url.href);
     const source = await readFile(url, 'utf8');
     const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
-    const module = new vm.SourceTextModule(compiled, { context, identifier: url.href, initializeImportMeta: meta => { meta.env = { VITE_PROXY_API_URL: 'https://orderledger-api.onrender.com' }; } });
+    const module = new vm.SourceTextModule(compiled, { context, identifier: url.href, initializeImportMeta: meta => { meta.env = { PROD: production, VITE_PROXY_API_URL: 'https://orderledger-api.onrender.com' }; } });
     modules.set(url.href, module);
     await module.link((specifier, parent) => load(new URL(specifier + '.ts', parent.identifier)));
     return module;
@@ -178,5 +178,20 @@ test('the default direct server preserves login and custom servers still use the
   assert.deepEqual(events, []);
   api.setConnection('http://127.0.0.1:5100');
   assert.equal(api.getBase(), 'http://127.0.0.1:5100/api');
+  assert.equal(storage.getItem('orderledger_token'), null);
+});
+
+test('production browser uses same-origin cookies without sending a stored bearer token', async () => {
+  const requests = [];
+  const { api, storage } = await client(async (url, options) => {
+    requests.push({ url, options });
+    return Response.json({ user: { id: 'owner' }, business: { id: 'workspace' } });
+  }, true);
+  await api.getMe();
+  await api.getBusiness();
+  assert.deepEqual(requests.map(request => request.url), ['/api/auth/me', '/api/business']);
+  assert.ok(requests.every(({ options }) => options.credentials === 'same-origin' && !options.headers.has('Authorization')));
+  assert.equal(requests[1].options.headers.get('X-OrderLedger-Identity'), 'workspace:owner');
+  api.setToken();
   assert.equal(storage.getItem('orderledger_token'), null);
 });
