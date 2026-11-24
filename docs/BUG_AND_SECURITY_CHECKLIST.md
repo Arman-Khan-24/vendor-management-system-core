@@ -33,7 +33,7 @@ Source baseline is local main at `7e35110`. Checked items have a local code chan
 - [x] Apply the same policy to every future team-member and password-change entry point or migrate password hashing. Preserve existing login compatibility.
 - [x] Use an HttpOnly, Secure, SameSite cookie on the default production frontend with origin checks on writes. Retain bearer sessions for development and explicitly configured servers. Default to two-hour sessions and recheck membership and permissions on each authenticated request. Revoke issued sessions server-side on logout.
 - [x] Add a frontend Content Security Policy and anti-framing protection in Vercel configuration.
-- [ ] Verify the Vercel rewrite carries Set-Cookie and Cookie, the Render public origin matches the Vercel frontend, and browser login, logout and writes succeed.
+- [x] Verified production CSP, cookie attributes, authenticated reads and customer writes, and logout via the public Vercel URL on 2026-11-24. The HTTP smoke test used a separate QA workspace and archived its test customer.
 - [ ] Verify session rollout on the deployed app. Legacy tokens without session IDs are rejected. Affected users must sign in again.
 - [x] Scan local Git history for Gemini, Groq and OpenAI project-key patterns. No matching history entries found.
 - [ ] Scan the deployed configuration and published assets for exposed credentials. Rotate confirmed exposures.
