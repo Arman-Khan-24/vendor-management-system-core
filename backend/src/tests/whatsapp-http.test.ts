@@ -52,7 +52,7 @@ test('WhatsApp history uses JWT tenant identity and connection writes require ow
 test('disabled WhatsApp connections reject ingestion and obsolete mock endpoints are absent',async()=>{
   const original=WhatsAppRepository.runtimeConnection;
   WhatsAppRepository.runtimeConnection=async()=>({...connection,enabled:false});
-  try{assert.equal((await request('POST',`/webhooks/whatsapp/${businessId}`,'{}')).status,503);
+  try{assert.equal((await request('POST',`/webhooks/whatsapp/${businessId}`,'{}',{'x-hub-signature-256':'sha256='+'0'.repeat(64)})).status,503);
     assert.equal((await request('POST','/webhooks/whatsapp','{}')).status,404);
   }finally{WhatsAppRepository.runtimeConnection=original;}
 });

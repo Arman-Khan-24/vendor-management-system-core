@@ -1,3 +1,4 @@
+import { rejectNullBytes } from './middleware/input-strings.js';
 import { cachedRead } from './services/cached-read.js';
 import express from 'express';
 import cors from 'cors';
@@ -44,6 +45,7 @@ export function createApp(localDemo?: express.Router) {
   app.use(express.urlencoded({ limit: '1mb', extended: true }));
 
   const readiness = cachedRead(checkDatabaseReadiness, 3000);
+  app.use(rejectNullBytes);
   // Health check endpoint
   app.get('/health', async (req, res) => {
     try {
