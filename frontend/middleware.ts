@@ -13,11 +13,22 @@ export default async function middleware(request: Request) {
     headers.set('X-OrderLedger-Proxy-Token', token);
     headers.set('X-OrderLedger-Client-IP', ip);
   }
-  return fetch('https://orderledger-api.onrender.com' + path, {
+  const upstream = await fetch('https://orderledger-api.onrender.com' + path, {
     method: request.method,
     headers,
     body: request.method === 'POST' ? await request.arrayBuffer() : undefined,
     redirect: 'manual',
     cache: 'no-store',
+  });
+  // fetch can decode an upstream body. Its original encoded length no longer applies.
+  const responseHeaders = new Headers(upstream.headers);
+  responseHeaders.delete('content-length');
+  responseHeaders.delete('content-encoding');
+  responseHeaders.delete('transfer-encoding');
+  responseHeaders.set('cache-control', 'no-store');
+  return new Response(upstream.body, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers: responseHeaders,
   });
 }
