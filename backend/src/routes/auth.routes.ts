@@ -1,3 +1,4 @@
+import { getAuthClientIp, verifyVercelClientIp } from '../middleware/vercel-client-ip.js';
 import { withTransaction } from '../database/connection.js';
 import jwt from 'jsonwebtoken';
 import { Router, type Request, type Response } from 'express';
@@ -40,7 +41,7 @@ router.get('/templates', async (req, res, next) => {
   }
 });
 
-router.post('/register', rateLimit(60, 60000, req => req.ip ?? 'unknown'), validateBody(registerSchema), async (req, res, next) => {
+router.post('/register', verifyVercelClientIp, rateLimit(60, 60000, getAuthClientIp), validateBody(registerSchema), async (req, res, next) => {
   try {
     const result = await AuthService.registerOwnerAndBusiness(req.body);
     sendSession(req, res, 201, result);
@@ -49,8 +50,8 @@ router.post('/register', rateLimit(60, 60000, req => req.ip ?? 'unknown'), valid
   }
 });
 
-router.post('/login', rateLimit(120, 60000, req => req.ip ?? 'unknown'), validateBody(loginSchema),
-  rateLimit(10, 60000, req => JSON.stringify([req.ip ?? 'unknown', req.body.email.trim().toLowerCase()])), async (req, res, next) => {
+router.post('/login', verifyVercelClientIp, rateLimit(120, 60000, getAuthClientIp), validateBody(loginSchema),
+  rateLimit(10, 60000, req => JSON.stringify([getAuthClientIp(req), req.body.email.trim().toLowerCase()])), async (req, res, next) => {
   try {
     const result = await AuthService.login(req.body);
     sendSession(req, res, 200, result);

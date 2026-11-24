@@ -74,7 +74,7 @@ export function normalizeBusinessConnections(rows: readonly ConnectionSummaryRow
     const provider: ConnectionProvider = envProvider === 'groq' || envProvider === 'gemini'
       ? envProvider : slot === 'primary' ? 'gemini' : 'groq';
     const defaultKey = process.env[prefix + '_API_KEY'] || (provider === 'gemini' ? process.env.GEMINI_API_KEY : process.env.GROQ_API_KEY);
-    const model = process.env[prefix + '_MODEL'] || (provider === 'gemini' ? 'gemini-2.5-flash' : defaultKey ? 'llama-3.3-70b-versatile' : '');
+    const model = process.env[prefix + '_MODEL'] || (provider === 'gemini' ? 'gemini-2.5-flash' : defaultKey ? 'qwen/qwen3.8-27b' : '');
     const visionModel = process.env[prefix + '_VISION_MODEL'];
     const saved = rows.find(row => row.slot === slot);
     connections[slot] = saved ? {

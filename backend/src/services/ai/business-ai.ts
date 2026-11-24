@@ -12,7 +12,7 @@ async function loadProviderFactory(businessId: string) {
     const saved = rows.find(row => row.slot === slot);
     const prefix = 'AI_' + slot.toUpperCase();
     const name = saved?.provider ?? (process.env[prefix + '_PROVIDER'] || (slot === 'primary' ? 'gemini' : 'groq'));
-    const model = saved?.model ?? (process.env[prefix + '_MODEL'] || (name === 'gemini' ? 'gemini-2.5-flash' : 'llama-3.3-70b-versatile'));
+    const model = saved?.model ?? (process.env[prefix + '_MODEL'] || (name === 'gemini' ? 'gemini-2.5-flash' : 'qwen/qwen3.8-27b'));
     const visionModel = saved ? saved.vision_model || model : process.env[prefix + '_VISION_MODEL'] || model;
     const key = saved
       ? decryptSecret(saved.api_key_encrypted, businessId, slot)

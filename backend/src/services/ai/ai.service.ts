@@ -68,15 +68,20 @@ export class GeminiExtractionProvider implements IOrderExtractionProvider {
 
 export class GroqExtractionProvider implements IOrderExtractionProvider {
   readonly name = 'groq';
-  constructor(private apiKey: string, public readonly model = 'llama-3.3-70b-versatile', private visionModel = model, private endpoint = 'https://api.groq.com/openai/v1', private beforeRequest?: () => Promise<void>) {}
+  constructor(private apiKey: string, public readonly model = 'qwen/qwen3.8-27b', private visionModel = model, private endpoint = 'https://api.groq.com/openai/v1', private beforeRequest?: () => Promise<void>) {}
   private async call(content: unknown, catalog: CatalogItemContext[], model: string, previous?: ExtractedOrderItem[]) {
     if (!this.apiKey || !model || ['mock','test'].includes(this.apiKey)) throw new ProviderError('AI_NOT_CONFIGURED', false);
     if (this.endpoint.replace(/\/$/,'') !== 'https://api.groq.com/openai/v1') throw new ProviderError('UNSUPPORTED_AI_ENDPOINT', false);
     await this.beforeRequest?.();
+    const qwen = model === 'qwen/qwen3.8-27b';
     const data = await fetchProviderJson(`${this.endpoint.replace(/\/$/,'')}/chat/completions`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
       body: JSON.stringify({ model, messages: [{ role: 'system', content: prompt(catalog, previous) }, { role: 'user', content }],
-        response_format: { type: 'json_object' }, max_completion_tokens: 8192 })
+        response_format: qwen
+          ? { type: 'json_schema', json_schema: { name: 'order_extraction', schema: jsonSchema, strict: false } }
+          : { type: 'json_object' },
+        ...(qwen ? { reasoning_effort: 'none', reasoning_format: 'hidden' } : {}),
+        max_completion_tokens: 8192 })
     });
     return parseOutput(data.choices?.[0]?.message?.content, model);
   }

@@ -19,14 +19,14 @@ Source baseline is local main at `7e35110`. Checked items have a local code chan
 
 - [x] Add in-process limits for login, signup, text/photo import, and AI connection tests.
 - [x] Scope the login account counter to the client IP and normalized email. Keep the separate per-IP limit.
-- [ ] Confirm client IP handling through Render and Vercel. Use shared rate-limit counters where multiple instances or restarts would bypass local counters.
+- [ ] Add a trusted way to identify individual client IPs through Vercel and Render. Express currently keys requests by the immediate peer IP. Use shared counters if the deployment uses multiple instances.
 - [x] Add database-backed limits of 30 shared requests per business and 300 globally per UTC day. Manual imports, provider tests and WhatsApp all reserve from the same budget. A configured `SHARED_AI_BUSINESS_IDS` allowlist gates access.
 - [ ] Configure the production allowlist and decide whether to add a separate in-flight concurrency limit.
 - [x] Require certificate and hostname verification for remote PostgreSQL. Trust the published Supabase CA for its pooler and support `DATABASE_CA_CERT` for other private CAs.
 - [x] Verified the Supabase pooler certificate and hostname against the published CA and confirmed production database readiness on Render build `607729c`.
 - [x] Support a separate `PROVIDER_ENCRYPTION_KEY` for new AI and WhatsApp secrets, with legacy decryption during migration.
 - [x] Add a transactional migration command for existing AI and WhatsApp credentials. Run `node dist/database/rotate-provider-credentials.js` from the built backend with the configured keys and database connection.
-- [ ] Configure the separate key in production, run the migration, verify affected credentials, and retire the legacy key.
+- [x] Configured the AI-only encryption key on Render. Startup migration on build `c67cd81` found zero older AI credential rows. A disposable PostgreSQL test verified migration of an existing key and safe reruns.
 - [x] Replace reflected CORS with configured browser origins. Set the production frontend origin in the Render blueprint.
 - [x] Verified production CORS allows the Vercel frontend and emits no authorization header for a foreign origin.
 - [ ] Verify any additional self-hosted development origins used by the team.
@@ -45,7 +45,8 @@ Source baseline is local main at `7e35110`. Checked items have a local code chan
 - [ ] Add focused regression coverage for key changes, unreadable fallback isolation, credential rotation, quotas, session revocation, CORS, and TLS configuration.
 - [ ] Verify tenant and role isolation across customers, products, orders, invoices, payments, reports, settings, and WhatsApp.
 - [ ] Verify financial invariants in staging. Cover concurrent orders, invoice generation, payment caps, retries, and rollback. Use disposable tenants and synthetic payments.
-- [ ] Verify text and photo imports with real provider credentials in a disposable workspace. Cover invalid photos, ambiguous items, and preservation of editable drafts.
+- [x] Verified live Gemini text and photo imports and the server-default reset in a QA workspace. Both imports returned one item at quantity two.
+- [ ] Verify live Groq and automatic fallback when a valid Groq credential is available.
 - [ ] Verify signed WhatsApp webhooks, retry behavior, and one controlled staging reply.
 - [ ] Verify startup recovery, mobile and desktop flows, and matching frontend/backend release versions.
 - [x] Upgrade flagged dependencies in both lockfiles. npm audit reported zero findings after the updates.

@@ -42,7 +42,7 @@ const toDraft = (connections: Connections) => ({ primary: { ...connections.prima
 const providerDefaults = {
   openai: { endpoint: 'https://api.openai.com/v1', model: '' },
   gemini: { endpoint: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-2.5-flash' },
-  groq: { endpoint: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile' },
+  groq: { endpoint: 'https://api.groq.com/openai/v1', model: 'qwen/qwen3.8-27b' },
   custom: { endpoint: '', model: '' },
 };
 export function ProviderConnections({ onDirtyChange, onBusyChange }: { onDirtyChange: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void }) {
